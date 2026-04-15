@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'driver_dashboard_screen.dart';
+import 'driver_chat_screen.dart';
 import 'driver_map_screen.dart';
 import 'driver_orders_screen.dart';
 import 'driver_profile_screen.dart';
@@ -155,6 +156,7 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
                                   builder: (_) => DriverChatScreen(
                                     customerName: conversation.customerName,
                                     orderId: conversation.orderId,
+                                    status: conversation.status.label,
                                   ),
                                 ),
                               );
@@ -212,11 +214,20 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
         },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Dashboard'),
-          BottomNavigationBarItem(icon: Icon(Icons.receipt), label: 'Orders'),
-          BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Messages'),
-          BottomNavigationBarItem(icon: Icon(Icons.map_outlined), label: 'Map'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
+            icon: Icon(Icons.receipt_long_outlined),
+            label: 'Orders',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.chat_bubble_outline_rounded),
+            label: 'Messages',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.near_me_outlined),
+            label: 'Map',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_outline_rounded),
             label: 'Profile',
           ),
         ],
@@ -628,50 +639,6 @@ class _SectionHeader extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class DriverChatScreen extends StatelessWidget {
-  const DriverChatScreen({
-    super.key,
-    required this.customerName,
-    required this.orderId,
-  });
-
-  final String customerName;
-  final String orderId;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F8FB),
-      appBar: AppBar(
-        title: Text(customerName),
-        backgroundColor: const Color(0xFFF6F8FB),
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(24),
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              orderId,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-      ),
-      body: const Center(
-        child: Text(
-          'Driver Chat Screen (UI only)',
-          style: TextStyle(color: Color(0xFF64748B)),
-        ),
       ),
     );
   }

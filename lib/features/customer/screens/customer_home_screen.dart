@@ -213,7 +213,7 @@ class _OrderWaterCard extends StatelessWidget {
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
+                  color: Colors.white.withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Row(
@@ -409,7 +409,7 @@ class _ActiveOrderCard extends StatelessWidget {
                   MaterialPageRoute<void>(
                     builder: (_) => TrackOrderScreen(
                       status: status,
-                      currentStep: _stepFromStatus(),
+                      deliveryType: status == 'Preparing' ? 'scheduled' : 'now',
                     ),
                   ),
                 );

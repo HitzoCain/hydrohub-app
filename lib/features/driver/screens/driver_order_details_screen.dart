@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import 'driver_dashboard_screen.dart';
 import 'driver_map_screen.dart';
@@ -9,21 +11,21 @@ import 'driver_profile_screen.dart';
 class DriverOrderDetailsScreen extends StatelessWidget {
   const DriverOrderDetailsScreen({
     super.key,
-    this.orderId = 'Order #001',
-    this.status = 'Pending',
     this.customerName = 'Juan Dela Cruz',
+    this.orderId = 'Order #001',
+    this.address = 'Blk 8 Lot 12, Quezon City, Metro Manila',
+    this.status = 'Pending',
     this.contactNumber = '+63 912 345 6789',
-    this.deliveryAddress = 'Blk 8 Lot 12, Quezon City, Metro Manila',
     this.totalGallons = 5,
     this.exchangeContainers = 3,
     this.newContainers = 2,
   });
 
-  final String orderId;
-  final String status;
   final String customerName;
+  final String orderId;
+  final String address;
+  final String status;
   final String contactNumber;
-  final String deliveryAddress;
   final int totalGallons;
   final int exchangeContainers;
   final int newContainers;
@@ -31,6 +33,8 @@ class DriverOrderDetailsScreen extends StatelessWidget {
   static const Color _background = Color(0xFFF6F8FB);
   static const Color _primaryBlue = Color(0xFF2563EB);
   static const Color _successGreen = Color(0xFF16A34A);
+  static const LatLng _customerLocation = LatLng(14.5995, 120.9842);
+  static const LatLng _driverLocation = LatLng(14.5920, 120.9785);
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +99,7 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                     const SizedBox(height: 8),
                     _InfoRow(label: 'Contact Number', value: contactNumber),
                     const SizedBox(height: 8),
-                    _InfoRow(label: 'Delivery Address', value: deliveryAddress),
+                    _InfoRow(label: 'Delivery Address', value: address),
                   ],
                 ),
               ),
@@ -141,33 +145,58 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Container(
-                      height: 220,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEFF4FF),
+                      const Text(
+                        'Customer Location',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF475569),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFC7D7FE)),
-                      ),
-                      alignment: Alignment.center,
-                      child: const Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.map_outlined,
-                            size: 30,
-                            color: Color(0xFF2563EB),
-                          ),
-                          SizedBox(height: 8),
-                          Text(
-                            'Map View (Driver to Customer)',
-                            style: TextStyle(
-                              color: Color(0xFF1E3A8A),
-                              fontWeight: FontWeight.w600,
+                        child: SizedBox(
+                          height: 220,
+                          width: double.infinity,
+                          child: FlutterMap(
+                            options: const MapOptions(
+                              initialCenter: _customerLocation,
+                              initialZoom: 15,
                             ),
+                            children: [
+                              TileLayer(
+                                urlTemplate:
+                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName: 'com.aquaenlavada.app',
+                              ),
+                              MarkerLayer(
+                                markers: [
+                                  Marker(
+                                    point: _customerLocation,
+                                    width: 40,
+                                    height: 40,
+                                    child: const Icon(
+                                      Icons.location_on,
+                                      color: Colors.red,
+                                      size: 40,
+                                    ),
+                                  ),
+                                  Marker(
+                                    point: _driverLocation,
+                                    width: 40,
+                                    height: 40,
+                                    child: const Icon(
+                                      Icons.delivery_dining,
+                                      color: Color(0xFF2563EB),
+                                      size: 40,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
                     ),
                   ],
                 ),
@@ -308,19 +337,19 @@ class DriverOrderDetailsScreen extends StatelessWidget {
             label: 'Dashboard',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.receipt),
+            icon: Icon(Icons.receipt_long_outlined),
             label: 'Orders',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.chat),
+            icon: Icon(Icons.chat_bubble_outline_rounded),
             label: 'Messages',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.map_outlined),
+            icon: Icon(Icons.near_me_outlined),
             label: 'Map',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
+            icon: Icon(Icons.person_outline_rounded),
             label: 'Profile',
           ),
         ],

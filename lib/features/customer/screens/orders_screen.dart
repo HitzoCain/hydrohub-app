@@ -10,31 +10,68 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen> {
   static const Color _background = Color(0xFFF6F8FB);
+  static const String _currentUserId = 'customer_1';
 
   int _selectedFilterIndex = 0;
 
   static const List<String> _filters = ['All', 'Active', 'Completed'];
 
-  static const List<_OrderItemData> _orders = [
+  static final List<_OrderItemData> _orders = [
     _OrderItemData(
       orderId: 'Order #001',
+      customerId: 'customer_1',
       gallons: '5 Gallons',
       price: '₱250',
       status: 'Delivered',
+      deliveryType: 'now',
     ),
     _OrderItemData(
       orderId: 'Order #002',
+      customerId: 'customer_2',
       gallons: '3 Gallons',
       price: '₱180',
       status: 'On the way',
+      deliveryType: 'now',
     ),
     _OrderItemData(
       orderId: 'Order #003',
+      customerId: 'customer_1',
       gallons: '6 Gallons',
       price: '₱320',
       status: 'Pending',
+      deliveryType: 'scheduled',
+      scheduledDate: DateTime(2026, 4, 20),
+      scheduledTime: TimeOfDay(hour: 9, minute: 0),
+    ),
+    _OrderItemData(
+      orderId: 'Order #004',
+      customerId: 'customer_2',
+      gallons: '4 Gallons',
+      price: '₱220',
+      status: 'Delivered',
+      deliveryType: 'scheduled',
+      scheduledDate: DateTime(2026, 4, 22),
+      scheduledTime: TimeOfDay(hour: 14, minute: 30),
     ),
   ];
+
+  List<_OrderItemData> get _visibleOrders {
+    final userOrders = _orders
+        .where((order) => order.customerId == _currentUserId)
+        .toList();
+
+    if (_selectedFilterIndex == 1) {
+      return userOrders
+          .where((order) => order.status != 'Delivered')
+          .toList();
+    }
+
+    if (_selectedFilterIndex == 2) {
+      return userOrders.where((order) => order.status == 'Delivered').toList();
+    }
+
+    return userOrders;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -100,14 +137,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
             ),
             const SizedBox(height: 14),
             Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                itemCount: _orders.length,
-                itemBuilder: (context, index) {
-                  final order = _orders[index];
-                  return _OrderHistoryCard(order: order);
-                },
-              ),
+              child: _visibleOrders.isEmpty
+                  ? const _EmptyState()
+                  : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      itemCount: _visibleOrders.length,
+                      itemBuilder: (context, index) {
+                        final order = _visibleOrders[index];
+                        return _OrderHistoryCard(order: order);
+                      },
+                    ),
             ),
           ],
         ),
@@ -119,15 +158,23 @@ class _OrdersScreenState extends State<OrdersScreen> {
 class _OrderItemData {
   const _OrderItemData({
     required this.orderId,
+    required this.customerId,
     required this.gallons,
     required this.price,
     required this.status,
+    required this.deliveryType,
+    this.scheduledDate,
+    this.scheduledTime,
   });
 
   final String orderId;
+  final String customerId;
   final String gallons;
   final String price;
   final String status;
+  final String deliveryType;
+  final DateTime? scheduledDate;
+  final TimeOfDay? scheduledTime;
 }
 
 class _OrderHistoryCard extends StatelessWidget {
@@ -161,17 +208,38 @@ class _OrderHistoryCard extends StatelessWidget {
     }
   }
 
-  int _stepFromStatus() {
-    switch (order.status) {
-      case 'Pending':
-        return 1;
-      case 'On the way':
-        return 2;
-      case 'Delivered':
-        return 3;
-      default:
-        return 0;
-    }
+  String _formatDate(DateTime date) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
+  Color _deliveryTypeColor() {
+    return order.deliveryType == 'scheduled'
+        ? const Color(0xFF7C3AED)
+        : const Color(0xFF0369A1);
+  }
+
+  Color _deliveryTypeBackground() {
+    return order.deliveryType == 'scheduled'
+        ? const Color(0xFFEDE9FE)
+        : const Color(0xFFE0F2FE);
+  }
+
+  String _deliveryTypeLabel() {
+    return order.deliveryType == 'scheduled' ? 'Scheduled' : 'On Demand';
   }
 
   @override
@@ -189,8 +257,12 @@ class _OrderHistoryCard extends StatelessWidget {
               MaterialPageRoute<void>(
                 builder: (_) => TrackOrderScreen(
                   orderId: order.orderId,
+                  totalGallons: int.tryParse(order.gallons.split(' ').first) ?? 1,
+                  address: 'Home Address, Cebu City',
+                  deliveryType: order.deliveryType,
                   status: order.status,
-                  currentStep: _stepFromStatus(),
+                  scheduledDate: order.scheduledDate,
+                  scheduledTime: order.scheduledTime,
                 ),
               ),
             );
@@ -238,6 +310,40 @@ class _OrderHistoryCard extends StatelessWidget {
                           color: Color(0xFF0F172A),
                         ),
                       ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _deliveryTypeBackground(),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              _deliveryTypeLabel(),
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: _deliveryTypeColor(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (order.scheduledDate != null && order.scheduledTime != null) ...[
+                        const SizedBox(height: 5),
+                        Text(
+                          '${_formatDate(order.scheduledDate!)} • ${order.scheduledTime!.format(context)}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -286,6 +392,39 @@ class _OrderHistoryCard extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0F233455),
+              blurRadius: 10,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Text(
+          'No orders yet',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF64748B),
           ),
         ),
       ),

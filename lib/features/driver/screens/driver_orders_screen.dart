@@ -99,11 +99,11 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
                                 context,
                                 MaterialPageRoute<void>(
                                   builder: (_) => DriverOrderDetailsScreen(
+                                    customerName: delivery.customerName,
                                     orderId: delivery.orderId,
                                     status: delivery.status.label,
-                                    customerName: delivery.customerName,
                                     contactNumber: '+63 912 345 6789',
-                                    deliveryAddress: delivery.address,
+                                    address: delivery.address,
                                     totalGallons: delivery.gallons,
                                     exchangeContainers: 3,
                                     newContainers: 2,
@@ -168,19 +168,19 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
             label: 'Dashboard',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.receipt),
+            icon: Icon(Icons.receipt_long_outlined),
             label: 'Orders',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.chat),
+            icon: Icon(Icons.chat_bubble_outline_rounded),
             label: 'Messages',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.map_outlined),
+            icon: Icon(Icons.near_me_outlined),
             label: 'Map',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
+            icon: Icon(Icons.person_outline_rounded),
             label: 'Profile',
           ),
         ],

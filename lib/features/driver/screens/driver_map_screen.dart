@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import 'driver_dashboard_screen.dart';
+import 'driver_order_details_screen.dart';
 import 'driver_messages_screen.dart';
 import 'driver_orders_screen.dart';
 import 'driver_profile_screen.dart';
@@ -15,37 +18,35 @@ class DriverMapScreen extends StatefulWidget {
 class _DriverMapScreenState extends State<DriverMapScreen> {
   static const Color _background = Color(0xFFF6F8FB);
   static const Color _primaryBlue = Color(0xFF2563EB);
+  static const LatLng _driverLocation = LatLng(14.5995, 120.9842);
 
-  static const List<DeliveryLocationData> _deliveries = [
+  static const List<DeliveryLocationData> _customers = [
     DeliveryLocationData(
       customerName: 'Juan Dela Cruz',
       orderId: 'Order #001',
       address: 'Blk 8 Lot 12, Quezon City',
       status: DeliveryStatus.delivering,
-      leftFactor: 0.18,
-      topFactor: 0.30,
+      location: LatLng(14.6095, 120.9892),
     ),
     DeliveryLocationData(
       customerName: 'Maria Santos',
       orderId: 'Order #002',
       address: 'P. Burgos St, Makati City',
       status: DeliveryStatus.pending,
-      leftFactor: 0.62,
-      topFactor: 0.48,
+      location: LatLng(14.5895, 120.9792),
     ),
     DeliveryLocationData(
       customerName: 'Pedro Reyes',
       orderId: 'Order #003',
       address: 'C. Raymundo Ave, Pasig City',
       status: DeliveryStatus.delivering,
-      leftFactor: 0.38,
-      topFactor: 0.66,
+      location: LatLng(14.6032, 120.9968),
     ),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final activeCount = _deliveries
+    final activeCount = _customers
         .where((delivery) => delivery.status == DeliveryStatus.delivering)
         .length;
 
@@ -68,18 +69,19 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: Container(
-                color: const Color(0xFFEAF1FF),
-                child: const Center(
-                  child: Text(
-                    'Map View (All Delivery Locations)',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF475569),
-                    ),
-                  ),
+              child: FlutterMap(
+                options: const MapOptions(
+                  initialCenter: _driverLocation,
+                  initialZoom: 13,
                 ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.aquaenlavada.app',
+                  ),
+                  MarkerLayer(markers: _buildMarkers()),
+                ],
               ),
             ),
             Positioned(
@@ -87,24 +89,6 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
               left: 16,
               right: 16,
               child: _TopInfoCard(activeCount: activeCount),
-            ),
-            Positioned.fill(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return Stack(
-                    children: _deliveries.map((delivery) {
-                      return Positioned(
-                        left: constraints.maxWidth * delivery.leftFactor,
-                        top: constraints.maxHeight * delivery.topFactor,
-                        child: DeliveryMarker(
-                          data: delivery,
-                          onTap: () => _showDeliverySheet(delivery),
-                        ),
-                      );
-                    }).toList(),
-                  );
-                },
-              ),
             ),
           ],
         ),
@@ -158,24 +142,56 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
             label: 'Dashboard',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.receipt),
+            icon: Icon(Icons.receipt_long_outlined),
             label: 'Orders',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.chat),
+            icon: Icon(Icons.chat_bubble_outline_rounded),
             label: 'Messages',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.map_outlined),
+            icon: Icon(Icons.near_me_outlined),
             label: 'Map',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
+            icon: Icon(Icons.person_outline_rounded),
             label: 'Profile',
           ),
         ],
       ),
     );
+  }
+
+  List<Marker> _buildMarkers() {
+    final customerMarkers = _customers.map((delivery) {
+      return Marker(
+        point: delivery.location,
+        width: 128,
+        height: 66,
+        child: GestureDetector(
+          onTap: () => _showDeliverySheet(delivery),
+          child: DeliveryMarker(
+            label: delivery.orderId,
+            icon: Icons.location_on,
+            iconColor: Colors.red,
+          ),
+        ),
+      );
+    });
+
+    return [
+      const Marker(
+        point: _driverLocation,
+        width: 90,
+        height: 62,
+        child: DeliveryMarker(
+          label: 'Driver',
+          icon: Icons.delivery_dining,
+          iconColor: _primaryBlue,
+        ),
+      ),
+      ...customerMarkers,
+    ];
   }
 
   void _showDeliverySheet(DeliveryLocationData delivery) {
@@ -249,9 +265,15 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
                 child: ElevatedButton(
                   onPressed: () {
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(this.context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Navigate to Order Details (UI only)'),
+                    Navigator.push(
+                      this.context,
+                      MaterialPageRoute<void>(
+                        builder: (context) => DriverOrderDetailsScreen(
+                          customerName: delivery.customerName,
+                          orderId: delivery.orderId,
+                          address: delivery.address,
+                          status: delivery.status.label,
+                        ),
                       ),
                     );
                   },
@@ -281,70 +303,48 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
 class DeliveryMarker extends StatelessWidget {
   const DeliveryMarker({
     super.key,
-    required this.data,
-    required this.onTap,
+    required this.label,
+    required this.icon,
+    required this.iconColor,
   });
 
-  final DeliveryLocationData data;
-  final VoidCallback onTap;
+  final String label;
+  final IconData icon;
+  final Color iconColor;
 
   @override
   Widget build(BuildContext context) {
-    final isDelivering = data.status == DeliveryStatus.delivering;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x14233455),
-                  blurRadius: 10,
-                  offset: Offset(0, 3),
-                ),
-              ],
-            ),
-            child: Text(
-              data.orderId,
-              style: const TextStyle(
-                color: Color(0xFF334155),
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(height: 2),
-          Row(
-            children: [
-              Icon(
-                Icons.location_on,
-                color: isDelivering ? const Color(0xFF2563EB) : const Color(0xFF64748B),
-                size: 28,
-              ),
-              const SizedBox(width: 2),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 96),
-                child: Text(
-                  data.customerName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x14233455),
+                blurRadius: 10,
+                offset: Offset(0, 3),
               ),
             ],
           ),
-        ],
-      ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF334155),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        Icon(
+          icon,
+          size: 34,
+          color: iconColor,
+        ),
+      ],
     );
   }
 }
@@ -443,16 +443,14 @@ class DeliveryLocationData {
     required this.orderId,
     required this.address,
     required this.status,
-    required this.leftFactor,
-    required this.topFactor,
+    required this.location,
   });
 
   final String customerName;
   final String orderId;
   final String address;
   final DeliveryStatus status;
-  final double leftFactor;
-  final double topFactor;
+  final LatLng location;
 }
 
 class _StatusTheme {

@@ -19,6 +19,9 @@ class _OrderScreenState extends State<OrderScreen> {
   int _newContainerCount = 1;
   String _deliveryAddress = 'Home';
   String _deliveryTime = 'Morning';
+  String _deliveryType = 'now';
+  DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
 
   int get _estimatedPrice =>
       (_exchangeCount * 250) + (_newContainerCount * 350);
@@ -74,6 +77,18 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _submitOrder() async {
     if (_isSubmitting) return;
 
+    if (_deliveryType == 'scheduled') {
+      if (_selectedDate == null || _selectedTime == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select both date and time for scheduled delivery.'),
+            backgroundColor: Color(0xFFDC2626),
+          ),
+        );
+        return;
+      }
+    }
+
     setState(() {
       _isSubmitting = true;
     });
@@ -102,14 +117,61 @@ class _OrderScreenState extends State<OrderScreen> {
         builder: (_) => TrackOrderScreen(
           orderId: 'Order #AQL-1042',
           totalGallons: _totalGallons,
-          status: 'Confirmed',
-          currentStep: 1,
+          address: _deliveryAddress,
+          deliveryType: _deliveryType,
+          status: _deliveryType == 'scheduled' ? 'scheduled' : 'on_the_way',
+          scheduledDate: _selectedDate,
+          scheduledTime: _selectedTime,
           driverName: 'Juan Santos',
           driverPhone: '+63 917 555 0188',
-          statusMessage: 'Your order has been confirmed and is now being prepared.',
         ),
       ),
     );
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? now,
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 60)),
+    );
+
+    if (picked == null) return;
+    setState(() {
+      _selectedDate = picked;
+    });
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? TimeOfDay.now(),
+    );
+
+    if (picked == null) return;
+    setState(() {
+      _selectedTime = picked;
+    });
+  }
+
+  String _formatDate(DateTime date) {
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 
   @override
@@ -208,7 +270,7 @@ class _OrderScreenState extends State<OrderScreen> {
                     title: 'Delivery Address',
                     icon: Icons.location_on_outlined,
                     child: DropdownButtonFormField<String>(
-                      value: _deliveryAddress,
+                      initialValue: _deliveryAddress,
                       decoration: _fieldDecoration(),
                       items: const [
                         DropdownMenuItem(value: 'Home', child: Text('Home')),
@@ -218,6 +280,129 @@ class _OrderScreenState extends State<OrderScreen> {
                         if (value == null) return;
                         setState(() => _deliveryAddress = value);
                       },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _SectionCard(
+                    title: 'Delivery Type',
+                    icon: Icons.local_shipping_outlined,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Choose when you want this order delivered',
+                          style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFFE2E8F0),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              _DeliveryTypeOption(
+                                title: 'Deliver Now',
+                                selected: _deliveryType == 'now',
+                                onTap: () {
+                                  setState(() {
+                                    _deliveryType = 'now';
+                                  });
+                                },
+                              ),
+                              _DeliveryTypeOption(
+                                title: 'Schedule Delivery',
+                                selected: _deliveryType == 'scheduled',
+                                onTap: () {
+                                  setState(() {
+                                    _deliveryType = 'scheduled';
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (_deliveryType == 'scheduled') ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _pickDate,
+                                  icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                                  label: Text(
+                                    _selectedDate == null
+                                        ? 'Select Date'
+                                        : _formatDate(_selectedDate!),
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF334155),
+                                    side: const BorderSide(color: Color(0xFFE2E8F0), width: 0.8),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    minimumSize: const Size(0, 44),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _pickTime,
+                                  icon: const Icon(Icons.access_time_outlined, size: 16),
+                                  label: Text(
+                                    _selectedTime == null
+                                        ? 'Select Time'
+                                        : _selectedTime!.format(context),
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF334155),
+                                    side: const BorderSide(color: Color(0xFFE2E8F0), width: 0.8),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    minimumSize: const Size(0, 44),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (_selectedDate != null && _selectedTime != null) ...[
+                            const SizedBox(height: 10),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEFF6FF),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                'Scheduled on ${_formatDate(_selectedDate!)} at ${_selectedTime!.format(context)}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF1D4ED8),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ],
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -288,6 +473,21 @@ class _OrderScreenState extends State<OrderScreen> {
                         _SummaryRow(label: 'With Exchange', value: '$_exchangeCount'),
                         const _SummaryDivider(),
                         _SummaryRow(label: 'New Containers', value: '$_newContainerCount'),
+                        const _SummaryDivider(),
+                        _SummaryRow(
+                          label: 'Delivery Type',
+                          value: _deliveryType == 'now' ? 'Deliver Now' : 'Scheduled',
+                        ),
+                        if (_deliveryType == 'scheduled' &&
+                            _selectedDate != null &&
+                            _selectedTime != null) ...[
+                          const _SummaryDivider(),
+                          _SummaryRow(
+                            label: 'Scheduled For',
+                            value:
+                                '${_formatDate(_selectedDate!)} ${_selectedTime!.format(context)}',
+                          ),
+                        ],
                         const SizedBox(height: 10),
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -623,12 +823,10 @@ class _SummaryRow extends StatelessWidget {
   const _SummaryRow({
     required this.label,
     required this.value,
-    this.highlight = false,
   });
 
   final String label;
   final String value;
-  final bool highlight;
 
   @override
   Widget build(BuildContext context) {
@@ -641,13 +839,53 @@ class _SummaryRow extends StatelessWidget {
         const Spacer(),
         Text(
           value,
-          style: TextStyle(
-            color: highlight ? const Color(0xFF2563EB) : const Color(0xFF0F172A),
-            fontSize: highlight ? 18 : 14,
+          style: const TextStyle(
+            color: Color(0xFF0F172A),
+            fontSize: 14,
             fontWeight: FontWeight.w700,
           ),
         ),
       ],
+    );
+  }
+}
+
+class _DeliveryTypeOption extends StatelessWidget {
+  const _DeliveryTypeOption({
+    required this.title,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: Row(
+          children: [
+            Icon(
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
+              size: 18,
+              color: selected ? const Color(0xFF2563EB) : const Color(0xFF94A3B8),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
