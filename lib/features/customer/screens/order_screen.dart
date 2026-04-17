@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'track_order_screen.dart';
+import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
 
 class OrderScreen extends StatefulWidget {
   const OrderScreen({super.key});
@@ -12,16 +15,150 @@ class OrderScreen extends StatefulWidget {
 class _OrderScreenState extends State<OrderScreen> {
   static const Color _primaryBlue = Color(0xFF2563EB);
   static const Color _background = Color(0xFFF1F5F9);
+  static const List<_SavedAddress> _fallbackAddresses = [
+    _SavedAddress(key: 'home', address: 'Home'),
+    _SavedAddress(key: 'office', address: 'Office'),
+  ];
 
   bool _isSubmitting = false;
+  bool _isFetchingLocationPreview = false;
+  bool _isLoadingAddresses = false;
   int _totalGallons = 1;
   int _exchangeCount = 0;
   int _newContainerCount = 1;
+  double? _currentLat;
+  double? _currentLng;
+  List<_SavedAddress> _savedAddresses = _fallbackAddresses;
+  String _selectedAddressKey = 'home';
   String _deliveryAddress = 'Home';
+  double? _selectedLat;
+  double? _selectedLng;
   String _deliveryTime = 'Morning';
   String _deliveryType = 'now';
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshCurrentLocationPreview();
+    _loadSavedAddresses();
+  }
+
+  Future<void> _loadSavedAddresses() async {
+    if (_isLoadingAddresses) return;
+
+    setState(() {
+      _isLoadingAddresses = true;
+    });
+
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
+        return;
+      }
+
+      final addresses = await Supabase.instance.client
+          .from('user_addresses')
+          .select()
+          .eq('user_id', user.id);
+
+      final addressList = List<Map<String, dynamic>>.from(addresses)
+          .map((row) {
+            final value =
+                row['address'] ??
+                row['full_address'] ??
+                row['label'] ??
+                row['name'];
+            final address = value?.toString().trim() ?? '';
+            if (address.isEmpty) return null;
+
+            final key = (row['id'] ?? address).toString();
+            final lat = _toDouble(row['latitude'] ?? row['lat']);
+            final lng = _toDouble(row['longitude'] ?? row['lng']);
+
+            return _SavedAddress(
+              key: key,
+              address: address,
+              latitude: lat,
+              longitude: lng,
+            );
+          })
+          .whereType<_SavedAddress>()
+          .toList();
+
+      if (!mounted) return;
+
+      if (addressList.isEmpty) {
+        // Prepend customer profile address if available
+        if (CustomerSession.address != null &&
+            CustomerSession.address!.isNotEmpty) {
+          addressList.add(
+            _SavedAddress(
+              key: 'profile_address',
+              address: CustomerSession.address!.trim(),
+            ),
+          );
+        }
+
+        setState(() {
+          _savedAddresses = _fallbackAddresses;
+          _selectedAddressKey = _savedAddresses.first.key;
+          _deliveryAddress = _savedAddresses.first.address;
+          _selectedLat = _savedAddresses.first.latitude;
+          _selectedLng = _savedAddresses.first.longitude;
+        });
+        return;
+      }
+
+      setState(() {
+        // Prepend customer profile address if available
+        if (CustomerSession.address != null &&
+            CustomerSession.address!.isNotEmpty) {
+          addressList.insert(
+            0,
+            _SavedAddress(
+              key: 'profile_address',
+              address: CustomerSession.address!.trim(),
+            ),
+          );
+        }
+
+        _savedAddresses = addressList;
+        final selected = _savedAddresses.firstWhere(
+          (address) => address.key == _selectedAddressKey,
+          orElse: () => _savedAddresses.first,
+        );
+        _selectedAddressKey = selected.key;
+        _deliveryAddress = selected.address;
+        _selectedLat = selected.latitude;
+        _selectedLng = selected.longitude;
+      });
+    } catch (e) {
+      debugPrint('Failed to load saved addresses: $e');
+      if (!mounted) return;
+      setState(() {
+        _savedAddresses = _fallbackAddresses;
+        _selectedAddressKey = _savedAddresses.first.key;
+        _deliveryAddress = _savedAddresses.first.address;
+        _selectedLat = _savedAddresses.first.latitude;
+        _selectedLng = _savedAddresses.first.longitude;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingAddresses = false;
+        });
+      }
+    }
+  }
+
+  double? _toDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
 
   int get _estimatedPrice =>
       (_exchangeCount * 250) + (_newContainerCount * 350);
@@ -74,6 +211,61 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
+  Future<Position> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      throw Exception('Location services are disabled');
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied) {
+      throw Exception('Location permission denied');
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      throw Exception('Location permission permanently denied');
+    }
+
+    const locationSettings = LocationSettings(accuracy: LocationAccuracy.high);
+
+    return await Geolocator.getCurrentPosition(
+      locationSettings: locationSettings,
+    );
+  }
+
+  Future<void> _refreshCurrentLocationPreview() async {
+    if (_isFetchingLocationPreview) return;
+
+    setState(() {
+      _isFetchingLocationPreview = true;
+    });
+
+    try {
+      final position = await _getCurrentLocation();
+
+      if (!mounted) return;
+      setState(() {
+        _currentLat = position.latitude;
+        _currentLng = position.longitude;
+      });
+    } catch (_) {
+      // Keep the current UI if location cannot be fetched.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFetchingLocationPreview = false;
+        });
+      }
+    }
+  }
+
   Future<void> _submitOrder() async {
     if (_isSubmitting) return;
 
@@ -81,7 +273,9 @@ class _OrderScreenState extends State<OrderScreen> {
       if (_selectedDate == null || _selectedTime == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Please select both date and time for scheduled delivery.'),
+            content: Text(
+              'Please select both date and time for scheduled delivery.',
+            ),
             backgroundColor: Color(0xFFDC2626),
           ),
         );
@@ -93,40 +287,135 @@ class _OrderScreenState extends State<OrderScreen> {
       _isSubmitting = true;
     });
 
-    await Future<void>.delayed(const Duration(seconds: 2));
+    var isLoadingShown = false;
 
-    if (!mounted) return;
+    try {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          return const AlertDialog(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 12),
+                Expanded(child: Text('Getting your location...')),
+              ],
+            ),
+          );
+        },
+      );
+      isLoadingShown = true;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Order placed successfully!'),
-        backgroundColor: Color(0xFF16A34A),
-      ),
-    );
+      // Use selected saved address coordinates first.
+      double? lat = _selectedLat;
+      double? lng = _selectedLng;
 
-    await Future<void>.delayed(const Duration(milliseconds: 450));
+      // Fallback to live GPS if saved address has no coordinates.
+      if (lat == null || lng == null) {
+        final position = await _getCurrentLocation();
+        lat = position.latitude;
+        lng = position.longitude;
+      }
 
-    if (!mounted) return;
+      if (mounted) {
+        setState(() {
+          _currentLat = lat;
+          _currentLng = lng;
+        });
+      }
 
-    setState(() {
-      _isSubmitting = false;
-    });
+      debugPrint('Customer Lat: $lat');
+      debugPrint('Customer Lng: $lng');
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => TrackOrderScreen(
-          orderId: 'Order #AQL-1042',
-          totalGallons: _totalGallons,
-          address: _deliveryAddress,
-          deliveryType: _deliveryType,
-          status: _deliveryType == 'scheduled' ? 'scheduled' : 'on_the_way',
-          scheduledDate: _selectedDate,
-          scheduledTime: _selectedTime,
-          driverName: 'Juan Santos',
-          driverPhone: '+63 917 555 0188',
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        throw Exception('Please login first');
+      }
+
+      final scheduledDate =
+          _deliveryType == 'scheduled' && _selectedDate != null
+          ? _selectedDate!.toIso8601String().split('T')[0]
+          : null;
+
+      final scheduledTime =
+          _deliveryType == 'scheduled' && _selectedTime != null
+          ? '${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}'
+          : null;
+
+      final insertedOrder = await supabase
+          .from('orders')
+          .insert({
+            'customer_id': user.id,
+            'customer_name':
+                (user.userMetadata?['full_name'] as String?)
+                        ?.trim()
+                        .isNotEmpty ==
+                    true
+                ? (user.userMetadata?['full_name'] as String).trim()
+                : 'Customer',
+            'address': _deliveryAddress,
+            'customer_lat': lat,
+            'customer_lng': lng,
+            // Keep existing columns in sync for compatibility in map views.
+            'latitude': lat,
+            'longitude': lng,
+            'gallons': _totalGallons,
+            'total_price': _estimatedPrice,
+            'delivery_type': _deliveryType,
+            'scheduled_date': scheduledDate,
+            'scheduled_time': scheduledTime,
+            'status': 'pending',
+            'created_at': DateTime.now().toIso8601String(),
+          })
+          .select()
+          .single();
+
+      if (isLoadingShown && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        isLoadingShown = false;
+      }
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Order placed successfully!'),
+          backgroundColor: Color(0xFF16A34A),
         ),
-      ),
-    );
+      );
+
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CustomerTrackOrderScreen(order: insertedOrder),
+        ),
+      );
+    } catch (e) {
+      if (isLoadingShown && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        isLoadingShown = false;
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: const Color(0xFFDC2626),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
   }
 
   Future<void> _pickDate() async {
@@ -181,7 +470,10 @@ class _OrderScreenState extends State<OrderScreen> {
       appBar: AppBar(
         title: const Text(
           'Order Water',
-          style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF0F172A),
+          ),
         ),
         backgroundColor: _background,
         elevation: 0,
@@ -210,7 +502,10 @@ class _OrderScreenState extends State<OrderScreen> {
           children: [
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 children: [
                   _SectionCard(
                     title: 'Total Gallons',
@@ -220,7 +515,10 @@ class _OrderScreenState extends State<OrderScreen> {
                       children: [
                         const Text(
                           'Total number of gallons to order',
-                          style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF94A3B8),
+                          ),
                         ),
                         const SizedBox(height: 14),
                         _CounterRow(
@@ -240,7 +538,10 @@ class _OrderScreenState extends State<OrderScreen> {
                       children: [
                         const Text(
                           'Specify exchange and new containers',
-                          style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF94A3B8),
+                          ),
                         ),
                         const SizedBox(height: 14),
                         _CounterGroupCard(
@@ -269,17 +570,99 @@ class _OrderScreenState extends State<OrderScreen> {
                   _SectionCard(
                     title: 'Delivery Address',
                     icon: Icons.location_on_outlined,
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _deliveryAddress,
-                      decoration: _fieldDecoration(),
-                      items: const [
-                        DropdownMenuItem(value: 'Home', child: Text('Home')),
-                        DropdownMenuItem(value: 'Office', child: Text('Office')),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedAddressKey,
+                          decoration: _fieldDecoration(),
+                          items: _savedAddresses
+                              .map(
+                                (address) => DropdownMenuItem(
+                                  value: address.key,
+                                  child: Text(address.address),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            final selected = _savedAddresses.firstWhere(
+                              (address) => address.key == value,
+                            );
+
+                            setState(() {
+                              _selectedAddressKey = selected.key;
+                              _deliveryAddress = selected.address;
+                              _selectedLat = selected.latitude;
+                              _selectedLng = selected.longitude;
+                            });
+                          },
+                        ),
+                        if (_isLoadingAddresses)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Text(
+                              'Loading saved addresses...',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 10),
+                        if (_selectedLat != null && _selectedLng != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              'Selected address location: ${_selectedLat!.toStringAsFixed(5)}, ${_selectedLng!.toStringAsFixed(5)}',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF1D4ED8),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFF6FF),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.my_location,
+                                size: 16,
+                                color: Color(0xFF1D4ED8),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _currentLat != null && _currentLng != null
+                                      ? 'Current location: ${_currentLat!.toStringAsFixed(5)}, ${_currentLng!.toStringAsFixed(5)}'
+                                      : 'Current location not available yet',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF1D4ED8),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _isFetchingLocationPreview
+                                    ? null
+                                    : _refreshCurrentLocationPreview,
+                                child: Text(
+                                  _isFetchingLocationPreview
+                                      ? 'Loading...'
+                                      : 'Refresh',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setState(() => _deliveryAddress = value);
-                      },
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -291,7 +674,10 @@ class _OrderScreenState extends State<OrderScreen> {
                       children: [
                         const Text(
                           'Choose when you want this order delivered',
-                          style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF94A3B8),
+                          ),
                         ),
                         const SizedBox(height: 12),
                         Container(
@@ -334,7 +720,10 @@ class _OrderScreenState extends State<OrderScreen> {
                               Expanded(
                                 child: OutlinedButton.icon(
                                   onPressed: _pickDate,
-                                  icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                                  icon: const Icon(
+                                    Icons.calendar_today_outlined,
+                                    size: 16,
+                                  ),
                                   label: Text(
                                     _selectedDate == null
                                         ? 'Select Date'
@@ -347,7 +736,10 @@ class _OrderScreenState extends State<OrderScreen> {
                                   ),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: const Color(0xFF334155),
-                                    side: const BorderSide(color: Color(0xFFE2E8F0), width: 0.8),
+                                    side: const BorderSide(
+                                      color: Color(0xFFE2E8F0),
+                                      width: 0.8,
+                                    ),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12),
                                     ),
@@ -359,7 +751,10 @@ class _OrderScreenState extends State<OrderScreen> {
                               Expanded(
                                 child: OutlinedButton.icon(
                                   onPressed: _pickTime,
-                                  icon: const Icon(Icons.access_time_outlined, size: 16),
+                                  icon: const Icon(
+                                    Icons.access_time_outlined,
+                                    size: 16,
+                                  ),
                                   label: Text(
                                     _selectedTime == null
                                         ? 'Select Time'
@@ -372,7 +767,10 @@ class _OrderScreenState extends State<OrderScreen> {
                                   ),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: const Color(0xFF334155),
-                                    side: const BorderSide(color: Color(0xFFE2E8F0), width: 0.8),
+                                    side: const BorderSide(
+                                      color: Color(0xFFE2E8F0),
+                                      width: 0.8,
+                                    ),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12),
                                     ),
@@ -382,7 +780,8 @@ class _OrderScreenState extends State<OrderScreen> {
                               ),
                             ],
                           ),
-                          if (_selectedDate != null && _selectedTime != null) ...[
+                          if (_selectedDate != null &&
+                              _selectedTime != null) ...[
                             const SizedBox(height: 10),
                             Container(
                               width: double.infinity,
@@ -414,11 +813,16 @@ class _OrderScreenState extends State<OrderScreen> {
                       children: [
                         const Text(
                           'Choose a preferred time slot',
-                          style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF94A3B8),
+                          ),
                         ),
                         const SizedBox(height: 12),
                         Row(
-                          children: ['Morning', 'Afternoon', 'Evening'].map((slot) {
+                          children: ['Morning', 'Afternoon', 'Evening'].map((
+                            slot,
+                          ) {
                             final selected = _deliveryTime == slot;
                             return Expanded(
                               child: Padding(
@@ -426,10 +830,13 @@ class _OrderScreenState extends State<OrderScreen> {
                                   right: slot != 'Evening' ? 8 : 0,
                                 ),
                                 child: GestureDetector(
-                                  onTap: () => setState(() => _deliveryTime = slot),
+                                  onTap: () =>
+                                      setState(() => _deliveryTime = slot),
                                   child: AnimatedContainer(
                                     duration: const Duration(milliseconds: 200),
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 10,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: selected
                                           ? _primaryBlue
@@ -468,15 +875,26 @@ class _OrderScreenState extends State<OrderScreen> {
                     icon: Icons.receipt_long_outlined,
                     child: Column(
                       children: [
-                        _SummaryRow(label: 'Total Gallons', value: '$_totalGallons'),
+                        _SummaryRow(
+                          label: 'Total Gallons',
+                          value: '$_totalGallons',
+                        ),
                         const _SummaryDivider(),
-                        _SummaryRow(label: 'With Exchange', value: '$_exchangeCount'),
+                        _SummaryRow(
+                          label: 'With Exchange',
+                          value: '$_exchangeCount',
+                        ),
                         const _SummaryDivider(),
-                        _SummaryRow(label: 'New Containers', value: '$_newContainerCount'),
+                        _SummaryRow(
+                          label: 'New Containers',
+                          value: '$_newContainerCount',
+                        ),
                         const _SummaryDivider(),
                         _SummaryRow(
                           label: 'Delivery Type',
-                          value: _deliveryType == 'now' ? 'Deliver Now' : 'Scheduled',
+                          value: _deliveryType == 'now'
+                              ? 'Deliver Now'
+                              : 'Scheduled',
                         ),
                         if (_deliveryType == 'scheduled' &&
                             _selectedDate != null &&
@@ -491,7 +909,9 @@ class _OrderScreenState extends State<OrderScreen> {
                         const SizedBox(height: 10),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 12),
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFEFF6FF),
                             borderRadius: BorderRadius.circular(12),
@@ -504,7 +924,9 @@ class _OrderScreenState extends State<OrderScreen> {
                                   const Text(
                                     'Estimated Total',
                                     style: TextStyle(
-                                        fontSize: 11, color: Color(0xFF64748B)),
+                                      fontSize: 11,
+                                      color: Color(0xFF64748B),
+                                    ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
@@ -520,15 +942,20 @@ class _OrderScreenState extends State<OrderScreen> {
                               const Spacer(),
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 5),
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFFDCFCE7),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
                                 child: const Row(
                                   children: [
-                                    Icon(Icons.check_circle_rounded,
-                                        size: 12, color: Color(0xFF15803D)),
+                                    Icon(
+                                      Icons.check_circle_rounded,
+                                      size: 12,
+                                      color: Color(0xFF15803D),
+                                    ),
                                     SizedBox(width: 4),
                                     Text(
                                       'Ready to order',
@@ -555,7 +982,9 @@ class _OrderScreenState extends State<OrderScreen> {
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
               decoration: const BoxDecoration(
                 color: Colors.white,
-                border: Border(top: BorderSide(color: Color(0xFFE2E8F0), width: 0.5)),
+                border: Border(
+                  top: BorderSide(color: Color(0xFFE2E8F0), width: 0.5),
+                ),
               ),
               child: SizedBox(
                 width: double.infinity,
@@ -568,13 +997,18 @@ class _OrderScreenState extends State<OrderScreen> {
                           height: 18,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
                           ),
                         )
                       : const Icon(Icons.water_drop_rounded, size: 18),
                   label: Text(
                     _isSubmitting ? 'Placing Order...' : 'Place Order',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _primaryBlue,
@@ -820,10 +1254,7 @@ class _SummaryDivider extends StatelessWidget {
 }
 
 class _SummaryRow extends StatelessWidget {
-  const _SummaryRow({
-    required this.label,
-    required this.value,
-  });
+  const _SummaryRow({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -873,19 +1304,32 @@ class _DeliveryTypeOption extends StatelessWidget {
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
               size: 18,
-              color: selected ? const Color(0xFF2563EB) : const Color(0xFF94A3B8),
+              color: selected
+                  ? const Color(0xFF2563EB)
+                  : const Color(0xFF94A3B8),
             ),
             const SizedBox(width: 10),
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _SavedAddress {
+  const _SavedAddress({
+    required this.key,
+    required this.address,
+    this.latitude,
+    this.longitude,
+  });
+
+  final String key;
+  final String address;
+  final double? latitude;
+  final double? longitude;
 }

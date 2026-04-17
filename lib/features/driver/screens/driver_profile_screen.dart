@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/login_screen.dart';
+import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 
 import 'driver_dashboard_screen.dart';
 import 'driver_edit_profile_screen.dart';
@@ -90,17 +91,12 @@ class DriverProfileScreen extends StatelessWidget {
           } else if (index == 3) {
             Navigator.push(
               context,
-              MaterialPageRoute<void>(
-                builder: (_) => const DriverMapScreen(),
-              ),
+              MaterialPageRoute<void>(builder: (_) => const DriverMapScreen()),
             );
           }
         },
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Dashboard',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Dashboard'),
           BottomNavigationBarItem(
             icon: Icon(Icons.receipt_long_outlined),
             label: 'Orders',
@@ -204,17 +200,11 @@ class _QuickStatsCard extends StatelessWidget {
       child: Row(
         children: const [
           Expanded(
-            child: _StatBox(
-              value: '5',
-              label: 'Deliveries Today',
-            ),
+            child: _StatBox(value: '5', label: 'Deliveries Today'),
           ),
           SizedBox(width: 12),
           Expanded(
-            child: _StatBox(
-              value: '120',
-              label: 'Total Completed',
-            ),
+            child: _StatBox(value: '120', label: 'Total Completed'),
           ),
         ],
       ),
@@ -282,21 +272,22 @@ class _LogoutButton extends StatelessWidget {
       width: double.infinity,
       height: 50,
       child: ElevatedButton.icon(
-        onPressed: () {
+        onPressed: () async {
+          await DriverSession.clear();
+
+          if (!context.mounted) {
+            return;
+          }
+
           Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute<void>(
-              builder: (_) => const LoginScreen(),
-            ),
+            MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
             (route) => false,
           );
         },
         icon: const Icon(Icons.logout_rounded, size: 18),
         label: const Text(
           'Logout',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         ),
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF2563EB),
@@ -378,7 +369,9 @@ class _StatusRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isActive = status.toLowerCase() == 'active';
-    final background = isActive ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7);
+    final background = isActive
+        ? const Color(0xFFDCFCE7)
+        : const Color(0xFFFEF3C7);
     final color = isActive ? const Color(0xFF15803D) : const Color(0xFFB45309);
 
     return Row(

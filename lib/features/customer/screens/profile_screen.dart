@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/login_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/customer_home_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/edit_profile_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/address_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/messages_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/order_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/support_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -39,57 +36,6 @@ class ProfileScreen extends StatelessWidget {
             _LogoutButton(),
           ],
         ),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 3,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: const Color(0xFF2563EB),
-        unselectedItemColor: const Color(0xFF94A3B8),
-        backgroundColor: Colors.white,
-        elevation: 8,
-        selectedLabelStyle: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
-        unselectedLabelStyle: const TextStyle(fontSize: 11),
-        onTap: (index) {
-          if (index == 0) {
-            Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) => const CustomerHomeScreen(),
-              ),
-            );
-          } else if (index == 1) {
-            Navigator.push(
-              context,
-              MaterialPageRoute<void>(builder: (_) => const OrderScreen()),
-            );
-          } else if (index == 2) {
-            Navigator.push(
-              context,
-              MaterialPageRoute<void>(builder: (_) => const MessagesScreen()),
-            );
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_rounded),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.receipt_long_rounded),
-            label: 'Orders',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble_outline_rounded),
-            label: 'Messages',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline_rounded),
-            label: 'Profile',
-          ),
-        ],
       ),
     );
   }

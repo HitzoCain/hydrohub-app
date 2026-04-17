@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'map_picker_screen.dart';
 
 class AddressScreen extends StatefulWidget {
   const AddressScreen({super.key});
@@ -11,18 +15,301 @@ class _AddressScreenState extends State<AddressScreen> {
   static const Color _primaryBlue = Color(0xFF2563EB);
   static const Color _background = Color(0xFFF6F8FB);
 
-  final List<_SavedAddress> _savedAddresses = [
-    const _SavedAddress(
-      label: 'Home',
-      address:
-          '123 Main Street, Barangay San Isidro, Quezon City, Metro Manila',
-    ),
-    const _SavedAddress(
-      label: 'Office',
-      address:
-          '45 Business Park Avenue, Makati City, Metro Manila, Philippines',
-    ),
-  ];
+  List<_SavedAddress> _savedAddresses = const [];
+  bool _isLoadingAddresses = false;
+  String? _selectedAddress;
+  double? _selectedLat;
+  double? _selectedLng;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedAddresses();
+  }
+
+  Future<void> _loadSavedAddresses() async {
+    setState(() {
+      _isLoadingAddresses = true;
+    });
+
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
+        if (!mounted) return;
+        setState(() {
+          _savedAddresses = const [];
+        });
+        return;
+      }
+
+      final response = await Supabase.instance.client
+          .from('user_addresses')
+          .select()
+          .eq('user_id', user.id)
+          .order('created_at', ascending: false);
+
+      final list = List<Map<String, dynamic>>.from(response)
+          .map((row) {
+            return _SavedAddress(
+              id: row['id']?.toString(),
+              label: (row['label'] ?? 'Home').toString(),
+              address: (row['address'] ?? '').toString(),
+              latitude: _toDouble(row['latitude']),
+              longitude: _toDouble(row['longitude']),
+            );
+          })
+          .where((item) => item.address.trim().isNotEmpty)
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _savedAddresses = list;
+      });
+    } catch (e) {
+      debugPrint('Failed to load addresses: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingAddresses = false;
+        });
+      }
+    }
+  }
+
+  double? _toDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  Future<void> _openMapPickerAndSave() async {
+    final result = await Navigator.push<LatLng>(
+      context,
+      MaterialPageRoute(builder: (_) => const MapPickerScreen()),
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    final selectedAddress =
+        'Lat: ${result.latitude.toStringAsFixed(6)}, Lng: ${result.longitude.toStringAsFixed(6)}';
+
+    if (!mounted) return;
+    setState(() {
+      _selectedLat = result.latitude;
+      _selectedLng = result.longitude;
+      _selectedAddress = selectedAddress;
+    });
+
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
+        throw Exception('Please login first');
+      }
+
+      await Supabase.instance.client.from('user_addresses').insert({
+        'user_id': user.id,
+        'label': 'Home',
+        'address': selectedAddress,
+        'latitude': result.latitude,
+        'longitude': result.longitude,
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Address saved successfully')),
+      );
+
+      await _loadSavedAddresses();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to save address: $e')));
+    }
+  }
+
+  Future<void> _editAddress(_SavedAddress address) async {
+    final id = address.id;
+    if (id == null || id.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Address id is missing')));
+      return;
+    }
+
+    final labelController = TextEditingController(text: address.label);
+    final addressController = TextEditingController(text: address.address);
+    final formKey = GlobalKey<FormState>();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Edit Address',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: labelController,
+                    decoration: _inputDecoration('Label (Home / Office)'),
+                    validator: (value) {
+                      if ((value ?? '').trim().isEmpty) {
+                        return 'Label is required';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: addressController,
+                    minLines: 3,
+                    maxLines: 4,
+                    decoration: _inputDecoration('Full Address'),
+                    validator: (value) {
+                      if ((value ?? '').trim().isEmpty) {
+                        return 'Address is required';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final isValid =
+                            formKey.currentState?.validate() ?? false;
+                        if (!isValid) return;
+
+                        try {
+                          await Supabase.instance.client
+                              .from('user_addresses')
+                              .update({
+                                'label': labelController.text.trim(),
+                                'address': addressController.text.trim(),
+                              })
+                              .eq('id', id);
+
+                          if (!context.mounted) return;
+                          Navigator.of(context).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Address updated successfully'),
+                            ),
+                          );
+                          await _loadSavedAddresses();
+                        } catch (e) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Failed to update address: $e'),
+                            ),
+                          );
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _primaryBlue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: const Text(
+                        'Save Changes',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteAddress(_SavedAddress address) async {
+    final id = address.id;
+    if (id == null || id.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Address id is missing')));
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Address'),
+        content: const Text('Are you sure you want to delete this address?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await Supabase.instance.client
+          .from('user_addresses')
+          .delete()
+          .eq('id', id);
+
+      if (!mounted) return;
+      setState(() {
+        _savedAddresses.removeWhere((item) => item.id == id);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Address deleted successfully')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to delete address: $e')));
+    }
+  }
 
   void _openAddAddressForm() {
     final labelController = TextEditingController();
@@ -90,7 +377,8 @@ class _AddressScreenState extends State<AddressScreen> {
                     height: 50,
                     child: ElevatedButton(
                       onPressed: () {
-                        final isValid = formKey.currentState?.validate() ?? false;
+                        final isValid =
+                            formKey.currentState?.validate() ?? false;
                         if (!isValid) return;
 
                         Navigator.of(context).pop();
@@ -166,6 +454,58 @@ class _AddressScreenState extends State<AddressScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0F233455),
+                    blurRadius: 10,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Delivery Address',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _selectedAddress ?? 'No address selected',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ElevatedButton.icon(
+                    onPressed: _openMapPickerAndSave,
+                    icon: const Icon(Icons.map),
+                    label: const Text('Select on Map'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _primaryBlue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (_isLoadingAddresses)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Center(child: CircularProgressIndicator()),
+              ),
             if (_savedAddresses.isEmpty)
               Container(
                 width: double.infinity,
@@ -211,7 +551,11 @@ class _AddressScreenState extends State<AddressScreen> {
                     padding: EdgeInsets.only(
                       bottom: index == _savedAddresses.length - 1 ? 0 : 12,
                     ),
-                    child: _AddressCard(address: address),
+                    child: _AddressCard(
+                      address: address,
+                      onEdit: () => _editAddress(address),
+                      onDelete: () => _deleteAddress(address),
+                    ),
                   );
                 },
               ),
@@ -244,9 +588,15 @@ class _AddressScreenState extends State<AddressScreen> {
 }
 
 class _AddressCard extends StatelessWidget {
-  const _AddressCard({required this.address});
+  const _AddressCard({
+    required this.address,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   final _SavedAddress address;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -285,33 +635,43 @@ class _AddressCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text(
-                      address.label,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF0F172A),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            address.label,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            address.address,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              height: 1.4,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () {},
-                      icon: const Icon(
-                        Icons.edit_outlined,
-                        color: Color(0xFF2563EB),
-                      ),
-                      splashRadius: 20,
-                      tooltip: 'Edit address',
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit, color: Colors.blue),
+                          onPressed: onEdit,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: onDelete,
+                        ),
+                      ],
                     ),
                   ],
-                ),
-                Text(
-                  address.address,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    height: 1.4,
-                    color: Color(0xFF64748B),
-                  ),
                 ),
               ],
             ),
@@ -323,8 +683,17 @@ class _AddressCard extends StatelessWidget {
 }
 
 class _SavedAddress {
-  const _SavedAddress({required this.label, required this.address});
+  const _SavedAddress({
+    this.id,
+    required this.label,
+    required this.address,
+    this.latitude,
+    this.longitude,
+  });
 
+  final String? id;
   final String label;
   final String address;
+  final double? latitude;
+  final double? longitude;
 }

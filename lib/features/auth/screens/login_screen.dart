@@ -1,6 +1,13 @@
+import 'dart:io';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/customer_home_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:aqua_in_laba_app/features/auth/screens/customer_signup_screen.dart';
+import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_shell.dart';
+import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
 import 'package:aqua_in_laba_app/features/driver/screens/driver_dashboard_screen.dart';
+import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 
 enum UserRole { customer, driver }
 
@@ -20,9 +27,137 @@ class _LoginScreenState extends State<LoginScreen> {
 
   UserRole _selectedRole = UserRole.customer;
   bool _isLoading = false;
+  StreamSubscription<AuthState>? _authStateSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenToAuthStateChanges();
+    _restoreDriverSession();
+  }
+
+  void _listenToAuthStateChanges() {
+    _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange
+        .listen((data) async {
+          final session = data.session;
+
+          if (session == null) {
+            return;
+          }
+
+          debugPrint('Logged in user: ${session.user.email}');
+
+          if (data.event != AuthChangeEvent.signedIn) {
+            return;
+          }
+
+          await createOrUpdateProfile(session.user);
+
+          // Load profile cache and navigate to customer area.
+          try {
+            final profile = await Supabase.instance.client
+                .from('customer_profiles')
+                .select()
+                .eq('user_id', session.user.id)
+                .maybeSingle();
+
+            if (profile != null) {
+              await CustomerSession.save(
+                customerId: session.user.id,
+                customerName: (profile['name'] ?? '').toString(),
+                customerPhone: profile['phone']?.toString(),
+                customerAddress: profile['address']?.toString(),
+              );
+            }
+          } catch (e) {
+            debugPrint('Auth listener profile load error: $e');
+          }
+
+          if (!mounted) {
+            return;
+          }
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute<void>(builder: (_) => const CustomerNavShell()),
+          );
+        });
+  }
+
+  Future<void> createOrUpdateProfile(User user) async {
+    final supabase = Supabase.instance.client;
+
+    try {
+      // Check if profile exists
+      final existing = await supabase
+          .from('customer_profiles')
+          .select()
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      if (existing == null) {
+        // Insert new profile
+        await supabase.from('customer_profiles').insert({
+          'user_id': user.id,
+          'name':
+              user.userMetadata?['full_name']?.toString().trim().isNotEmpty ==
+                  true
+              ? user.userMetadata!['full_name'].toString().trim()
+              : 'New User',
+          'phone': '',
+          'address': '',
+        });
+
+        debugPrint('Profile created for user: ${user.id}');
+      } else {
+        debugPrint('Profile already exists for user: ${user.id}');
+      }
+    } catch (e) {
+      debugPrint('Profile error: $e');
+    }
+  }
+
+  Future<void> signInWithGoogle() async {
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'io.supabase.flutter://login-callback',
+      );
+    } catch (e) {
+      debugPrint('Google login error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Google login error: $e')));
+    }
+  }
+
+  Future<void> _restoreDriverSession() async {
+    final session = await DriverSession.load();
+    if (session == null || !mounted) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => DriverDashboardScreen(
+            driverId: session.id,
+            driverName: session.name,
+          ),
+        ),
+      );
+    });
+  }
 
   @override
   void dispose() {
+    _authStateSubscription?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
     _secretCodeController.dispose();
@@ -39,24 +174,196 @@ class _LoginScreenState extends State<LoginScreen> {
       _isLoading = true;
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 900));
+    try {
+      if (_selectedRole == UserRole.customer) {
+        final email = _emailController.text.trim();
+        final password = _passwordController.text.trim();
 
-    if (!mounted) {
-      return;
+        final supabase = Supabase.instance.client;
+
+        // Pre-flight check helps separate connectivity issues from auth issues.
+        await _testSupabaseConnection();
+
+        final res = await supabase.auth.signInWithPassword(
+          email: email,
+          password: password,
+        );
+        debugPrint('Login success: ${res.user?.id}');
+
+        final user = supabase.auth.currentUser;
+        debugPrint('Logged in user id: ${user?.id}');
+
+        await DriverSession.clear();
+
+        // Load customer profile
+        if (user != null) {
+          try {
+            final profile = await supabase
+                .from('customer_profiles')
+                .select()
+                .eq('user_id', user.id)
+                .single();
+
+            await CustomerSession.save(
+              customerId: user.id,
+              customerName: profile['name'] ?? '',
+              customerPhone: profile['phone'],
+              customerAddress: profile['address'],
+            );
+          } catch (profileError) {
+            debugPrint('Profile load error: $profileError');
+            // Continue with partial data if profile fetch fails
+          }
+        }
+
+        if (!mounted) {
+          return;
+        }
+
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Login successful')));
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute<void>(builder: (_) => const CustomerNavShell()),
+        );
+      } else {
+        final inputCode = _secretCodeController.text.trim();
+        final supabase = Supabase.instance.client;
+        String? loggedInDriverId;
+        String? loggedInDriverName;
+
+        try {
+          final response = await supabase
+              .from('employees')
+              .select()
+              .eq('access_code', inputCode)
+              .eq('role', 'driver')
+              .single();
+
+          final Map<String, dynamic> driver = response;
+
+          String? cleanString(dynamic value) {
+            if (value == null) {
+              return null;
+            }
+            final text = value.toString().trim();
+            return text.isEmpty ? null : text;
+          }
+
+          final driverId = cleanString(driver['id']);
+          if (driverId == null || driverId.isEmpty) {
+            throw Exception('Driver ID not found');
+          }
+
+          final fullName = cleanString(driver['full_name']);
+          final name = cleanString(driver['name']);
+          final firstName = cleanString(driver['first_name']);
+          final lastName = cleanString(driver['last_name']);
+
+          final nameParts = <String>[
+            if (firstName != null) firstName,
+            if (lastName != null) lastName,
+          ];
+
+          final resolvedName =
+              fullName ??
+              name ??
+              (nameParts.isNotEmpty ? nameParts.join(' ') : 'Driver');
+
+          final driverName = resolvedName;
+          loggedInDriverId = driverId;
+          loggedInDriverName = driverName;
+
+          await DriverSession.save(driverId: driverId, driverName: driverName);
+        } on PostgrestException {
+          if (!mounted) {
+            return;
+          }
+
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Invalid access code')));
+          return;
+        }
+
+        if (!mounted) {
+          return;
+        }
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute<void>(
+            builder: (_) => DriverDashboardScreen(
+              driverId: loggedInDriverId ?? DriverSession.id,
+              driverName: loggedInDriverName ?? DriverSession.name,
+            ),
+          ),
+        );
+      }
+    } on AuthException catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      debugPrint('Login auth error: ${e.message}');
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Login failed: ${e.message}')));
+    } on SocketException catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      debugPrint('Login socket error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Network/DNS issue. Please switch Wi-Fi/mobile data and try again.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = e.toString();
+      debugPrint('Login error: $message');
+
+      if (message.toLowerCase().contains('failed host lookup')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Cannot resolve Supabase host. Check DNS/network and retry.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
+  }
 
-    setState(() {
-      _isLoading = false;
-    });
-
-    final destination = _selectedRole == UserRole.customer
-        ? const CustomerHomeScreen()
-        : const DriverDashboardScreen();
-
-    Navigator.push(
-      context,
-      MaterialPageRoute<void>(builder: (_) => destination),
-    );
+  Future<void> _testSupabaseConnection() async {
+    try {
+      await Supabase.instance.client.from('orders').select('id').limit(1);
+      debugPrint('Supabase connection OK');
+    } catch (e) {
+      debugPrint('Supabase connection ERROR: $e');
+      rethrow;
+    }
   }
 
   InputDecoration _inputDecoration(String hint) {
@@ -184,19 +491,19 @@ class _LoginScreenState extends State<LoginScreen> {
                                   inputDecoration: _inputDecoration,
                                   validateRequired: _validateRequired,
                                   onLoginPressed: _handleLogin,
-                                  onGooglePressed: _isLoading
+                                  onSignupPressed: _isLoading
                                       ? null
                                       : () {
-                                          ScaffoldMessenger.of(context)
-                                            ..hideCurrentSnackBar()
-                                            ..showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                  'Google login is UI only.',
-                                                ),
-                                              ),
-                                            );
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute<void>(
+                                              builder: (_) =>
+                                                  const CustomerSignupScreen(),
+                                            ),
+                                          );
                                         },
+                                  onGooglePressed: _isLoading
+                                      ? null
+                                      : signInWithGoogle,
                                 )
                               : _DriverLoginForm(
                                   key: const ValueKey('driverForm'),
@@ -311,6 +618,7 @@ class _CustomerLoginForm extends StatelessWidget {
     required this.inputDecoration,
     required this.validateRequired,
     required this.onLoginPressed,
+    required this.onSignupPressed,
     required this.onGooglePressed,
   });
 
@@ -320,6 +628,7 @@ class _CustomerLoginForm extends StatelessWidget {
   final InputDecoration Function(String hint) inputDecoration;
   final String? Function(String?, String) validateRequired;
   final Future<void> Function() onLoginPressed;
+  final VoidCallback? onSignupPressed;
   final VoidCallback? onGooglePressed;
 
   @override
@@ -392,10 +701,26 @@ class _CustomerLoginForm extends StatelessWidget {
           child: OutlinedButton.icon(
             onPressed: onGooglePressed,
             icon: const Icon(Icons.g_mobiledata_rounded, size: 22),
-            label: const Text('Login with Google'),
+            label: const Text('Continue with Google'),
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFF1E3A8A),
               side: const BorderSide(color: Color(0xFFBFDBFE)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 48,
+          child: OutlinedButton.icon(
+            onPressed: onSignupPressed,
+            icon: const Icon(Icons.person_add_outlined, size: 22),
+            label: const Text('Create Account'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF2563EB),
+              side: const BorderSide(color: Color(0xFF2563EB), width: 1.2),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -432,13 +757,13 @@ class _DriverLoginForm extends StatelessWidget {
       children: [
         TextFormField(
           controller: secretCodeController,
-          decoration: inputDecoration('Enter Secret Code'),
+          decoration: inputDecoration('Enter Access Code'),
           validator: (value) =>
-              validateRequired(value, 'Secret code is required'),
+              validateRequired(value, 'Access code is required'),
         ),
         const SizedBox(height: 10),
         const Text(
-          'Enter the code provided by admin',
+          'Enter the access code provided by admin',
           textAlign: TextAlign.center,
           style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
         ),

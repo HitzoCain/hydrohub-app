@@ -4,7 +4,8 @@ class DriverEditProfileScreen extends StatefulWidget {
   const DriverEditProfileScreen({super.key});
 
   @override
-  State<DriverEditProfileScreen> createState() => _DriverEditProfileScreenState();
+  State<DriverEditProfileScreen> createState() =>
+      _DriverEditProfileScreenState();
 }
 
 class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
@@ -55,15 +56,16 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('Profile updated (UI only).'),
-        ),
+        const SnackBar(content: Text('Profile updated (UI only).')),
       );
 
     Navigator.pop(context);
   }
 
-  InputDecoration _inputDecoration({required String label, required String hint}) {
+  InputDecoration _inputDecoration({
+    required String label,
+    required String hint,
+  }) {
     return InputDecoration(
       labelText: label,
       hintText: hint,
@@ -156,10 +158,7 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
                     const SizedBox(height: 4),
                     const Text(
                       'Delivery Driver',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF64748B),
-                      ),
+                      style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
                     ),
                   ],
                 ),

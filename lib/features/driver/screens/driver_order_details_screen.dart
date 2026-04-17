@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 
 import 'driver_dashboard_screen.dart';
 import 'driver_map_screen.dart';
@@ -8,7 +10,7 @@ import 'driver_messages_screen.dart';
 import 'driver_orders_screen.dart';
 import 'driver_profile_screen.dart';
 
-class DriverOrderDetailsScreen extends StatelessWidget {
+class DriverOrderDetailsScreen extends StatefulWidget {
   const DriverOrderDetailsScreen({
     super.key,
     this.customerName = 'Juan Dela Cruz',
@@ -19,6 +21,7 @@ class DriverOrderDetailsScreen extends StatelessWidget {
     this.totalGallons = 5,
     this.exchangeContainers = 3,
     this.newContainers = 2,
+    this.onOrderCompleted,
   });
 
   final String customerName;
@@ -29,12 +32,21 @@ class DriverOrderDetailsScreen extends StatelessWidget {
   final int totalGallons;
   final int exchangeContainers;
   final int newContainers;
+  final VoidCallback? onOrderCompleted;
 
+  @override
+  State<DriverOrderDetailsScreen> createState() =>
+      _DriverOrderDetailsScreenState();
+}
+
+class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   static const Color _background = Color(0xFFF6F8FB);
   static const Color _primaryBlue = Color(0xFF2563EB);
   static const Color _successGreen = Color(0xFF16A34A);
   static const LatLng _customerLocation = LatLng(14.5995, 120.9842);
   static const LatLng _driverLocation = LatLng(14.5920, 120.9785);
+
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -71,12 +83,12 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    _InfoRow(label: 'Order ID', value: orderId),
+                    _InfoRow(label: 'Order ID', value: widget.orderId),
                     const SizedBox(height: 8),
                     _InfoRow(
                       label: 'Status',
-                      value: status,
-                      valueColor: _statusColor(status),
+                      value: widget.status,
+                      valueColor: _statusColor(widget.status),
                     ),
                   ],
                 ),
@@ -95,11 +107,17 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    _InfoRow(label: 'Customer Name', value: customerName),
+                    _InfoRow(
+                      label: 'Customer Name',
+                      value: widget.customerName,
+                    ),
                     const SizedBox(height: 8),
-                    _InfoRow(label: 'Contact Number', value: contactNumber),
+                    _InfoRow(
+                      label: 'Contact Number',
+                      value: widget.contactNumber,
+                    ),
                     const SizedBox(height: 8),
-                    _InfoRow(label: 'Delivery Address', value: address),
+                    _InfoRow(label: 'Delivery Address', value: widget.address),
                   ],
                 ),
               ),
@@ -119,15 +137,18 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                     const SizedBox(height: 12),
                     _InfoRow(
                       label: 'Total Gallons',
-                      value: '$totalGallons Gallons',
+                      value: '${widget.totalGallons} Gallons',
                     ),
                     const SizedBox(height: 8),
                     _InfoRow(
                       label: 'Exchange Containers',
-                      value: '$exchangeContainers',
+                      value: '${widget.exchangeContainers}',
                     ),
                     const SizedBox(height: 8),
-                    _InfoRow(label: 'New Containers', value: '$newContainers'),
+                    _InfoRow(
+                      label: 'New Containers',
+                      value: '${widget.newContainers}',
+                    ),
                   ],
                 ),
               ),
@@ -145,58 +166,58 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                      const Text(
-                        'Customer Location',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF475569),
+                    const Text(
+                      'Customer Location',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF475569),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: SizedBox(
+                        height: 220,
+                        width: double.infinity,
+                        child: FlutterMap(
+                          options: const MapOptions(
+                            initialCenter: _customerLocation,
+                            initialZoom: 15,
+                          ),
+                          children: [
+                            TileLayer(
+                              urlTemplate:
+                                  'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                              userAgentPackageName: 'com.aquaenlavada.app',
+                            ),
+                            MarkerLayer(
+                              markers: [
+                                Marker(
+                                  point: _customerLocation,
+                                  width: 40,
+                                  height: 40,
+                                  child: const Icon(
+                                    Icons.location_on,
+                                    color: Colors.red,
+                                    size: 40,
+                                  ),
+                                ),
+                                Marker(
+                                  point: _driverLocation,
+                                  width: 40,
+                                  height: 40,
+                                  child: const Icon(
+                                    Icons.delivery_dining,
+                                    color: Color(0xFF2563EB),
+                                    size: 40,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: SizedBox(
-                          height: 220,
-                          width: double.infinity,
-                          child: FlutterMap(
-                            options: const MapOptions(
-                              initialCenter: _customerLocation,
-                              initialZoom: 15,
-                            ),
-                            children: [
-                              TileLayer(
-                                urlTemplate:
-                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                userAgentPackageName: 'com.aquaenlavada.app',
-                              ),
-                              MarkerLayer(
-                                markers: [
-                                  Marker(
-                                    point: _customerLocation,
-                                    width: 40,
-                                    height: 40,
-                                    child: const Icon(
-                                      Icons.location_on,
-                                      color: Colors.red,
-                                      size: 40,
-                                    ),
-                                  ),
-                                  Marker(
-                                    point: _driverLocation,
-                                    width: 40,
-                                    height: 40,
-                                    child: const Icon(
-                                      Icons.delivery_dining,
-                                      color: Color(0xFF2563EB),
-                                      size: 40,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
                     ),
                   ],
                 ),
@@ -210,10 +231,7 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                   icon: const Icon(Icons.navigation_outlined, size: 18),
                   label: const Text(
                     'Open in Maps',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _primaryBlue,
@@ -255,7 +273,7 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                     child: SizedBox(
                       height: 50,
                       child: ElevatedButton(
-                        onPressed: () {},
+                        onPressed: _isLoading ? null : _handleCompleteDelivery,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _successGreen,
                           foregroundColor: Colors.white,
@@ -263,15 +281,27 @@ class DriverOrderDetailsScreen extends StatelessWidget {
                             borderRadius: BorderRadius.circular(14),
                           ),
                           elevation: 0,
+                          disabledBackgroundColor: Colors.grey.shade400,
                         ),
-                        child: const Text(
-                          'Mark as Delivered',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Text(
+                                'Mark as Delivered',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                       ),
                     ),
                   ),
@@ -318,9 +348,7 @@ class DriverOrderDetailsScreen extends StatelessWidget {
           } else if (index == 3) {
             Navigator.push(
               context,
-              MaterialPageRoute<void>(
-                builder: (_) => const DriverMapScreen(),
-              ),
+              MaterialPageRoute<void>(builder: (_) => const DriverMapScreen()),
             );
           } else if (index == 4) {
             Navigator.push(
@@ -332,10 +360,7 @@ class DriverOrderDetailsScreen extends StatelessWidget {
           }
         },
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Dashboard',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Dashboard'),
           BottomNavigationBarItem(
             icon: Icon(Icons.receipt_long_outlined),
             label: 'Orders',
@@ -355,6 +380,74 @@ class DriverOrderDetailsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _handleCompleteDelivery() async {
+    final orderId = widget.orderId.replaceFirst('Order #', '');
+    await _completeOrder(orderId);
+  }
+
+  Future<void> _completeOrder(String orderId) async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Get driver ID
+      final session = await DriverSession.load();
+      final driverId = session?.id ?? DriverSession.id;
+
+      if (driverId == null || driverId.isEmpty) {
+        throw Exception('Driver ID not found');
+      }
+
+      final supabase = Supabase.instance.client;
+
+      // Update order status to 'delivered'
+      await supabase
+          .from('orders')
+          .update({'status': 'delivered'})
+          .eq('id', orderId);
+
+    // Update driver status to 'active' (available)
+      await supabase
+          .from('employees')
+          .update({'status': 'active'})
+          .eq('id', driverId);
+
+      if (!mounted) return;
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Order marked as delivered!'),
+          backgroundColor: Color(0xFF16A34A),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      // Call the completion callback to refresh orders list
+      widget.onOrderCompleted?.call();
+
+      // Navigate back to orders list
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error completing delivery: $error'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   static Color _statusColor(String value) {

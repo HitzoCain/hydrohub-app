@@ -1,13 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/customer_home_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/chat_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/order_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/profile_screen.dart';
 
 class MessagesScreen extends StatelessWidget {
   const MessagesScreen({super.key});
 
-  static const Color _primaryBlue = Color(0xFF2563EB);
   static const Color _background = Color(0xFFF1F5F9);
 
   static const List<ContactData> _contacts = [
@@ -238,45 +234,6 @@ class MessagesScreen extends StatelessWidget {
             ),
           ],
         ),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 2,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: _primaryBlue,
-        unselectedItemColor: const Color(0xFF94A3B8),
-        backgroundColor: Colors.white,
-        elevation: 8,
-        selectedLabelStyle:
-            const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-        unselectedLabelStyle: const TextStyle(fontSize: 11),
-        onTap: (index) {
-          if (index == 0) {
-            Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                    builder: (_) => const CustomerHomeScreen()));
-          } else if (index == 1) {
-            Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                    builder: (_) => const OrderScreen()));
-          } else if (index == 3) {
-            Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                    builder: (_) => const ProfileScreen()));
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(
-              icon: Icon(Icons.home_rounded), label: 'Home'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.receipt_long_rounded), label: 'Orders'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.chat_bubble_rounded), label: 'Messages'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.person_outline_rounded), label: 'Profile'),
-        ],
       ),
     );
   }

@@ -1,15 +1,83 @@
 import 'package:flutter/material.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/messages_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/order_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/orders_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/profile_screen.dart';
+import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_controller.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/track_order_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
 
-class CustomerHomeScreen extends StatelessWidget {
+class CustomerHomeScreen extends StatefulWidget {
   const CustomerHomeScreen({super.key});
 
-  static const Color _primaryBlue = Color(0xFF2563EB);
+  State<CustomerHomeScreen> createState() => _CustomerHomeScreenState();
+}
+
+class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
+  Future<_DashboardOrdersData> _dashboardOrdersFuture =
+      Future<_DashboardOrdersData>.value(
+        const _DashboardOrdersData(activeOrders: [], recentOrders: []),
+      );
+
   static const Color _background = Color(0xFFF1F5F9);
+
+  @override
+  void initState() {
+    super.initState();
+    _reloadDashboardOrders();
+    CustomerNavController.instance.addListener(_handleTabChange);
+  }
+
+  @override
+  void dispose() {
+    CustomerNavController.instance.removeListener(_handleTabChange);
+    super.dispose();
+  }
+
+  void _handleTabChange() {
+    if (!mounted) return;
+    if (CustomerNavController.instance.index == 0) {
+      _reloadDashboardOrders();
+    }
+  }
+
+  void _reloadDashboardOrders() {
+    setState(() {
+      _dashboardOrdersFuture = _fetchDashboardOrders();
+    });
+  }
+
+  Future<_DashboardOrdersData> _fetchDashboardOrders() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    final customerId = user?.id;
+
+    debugPrint('Customer ID: $customerId');
+
+    if (customerId == null || customerId.trim().isEmpty) {
+      return const _DashboardOrdersData(activeOrders: [], recentOrders: []);
+    }
+
+    final today = DateTime.now().toIso8601String().split('T')[0];
+
+    final activeOrders = await Supabase.instance.client
+        .from('orders')
+        .select()
+        .eq('customer_id', customerId)
+        .not('status', 'in', '(delivered,cancelled)')
+        .order('created_at', ascending: false);
+
+    final recentOrders = await Supabase.instance.client
+        .from('orders')
+        .select()
+        .eq('customer_id', customerId)
+        .order('created_at', ascending: false)
+        .limit(5);
+
+    debugPrint('Active Orders: ${activeOrders.length}');
+    debugPrint('Today: $today');
+
+    return _DashboardOrdersData(
+      activeOrders: List<Map<String, dynamic>>.from(activeOrders),
+      recentOrders: List<Map<String, dynamic>>.from(recentOrders),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,88 +109,74 @@ class CustomerHomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        children: [
-          const _GreetingSection(),
-          const SizedBox(height: 20),
-          _OrderWaterCard(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute<void>(builder: (_) => const OrderScreen()),
-              );
-            },
-          ),
-          const SizedBox(height: 28),
-          const _SectionHeader(title: 'Active Orders'),
-          const SizedBox(height: 12),
-          const _ActiveOrdersList(),
-          const SizedBox(height: 28),
-          _RecentOrdersHeader(
-            onSeeAllTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute<void>(builder: (_) => const OrdersScreen()),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          const _RecentOrdersList(),
-          const SizedBox(height: 16),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 0,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: _primaryBlue,
-        unselectedItemColor: const Color(0xFF94A3B8),
-        backgroundColor: Colors.white,
-        elevation: 8,
-        selectedLabelStyle: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
-        unselectedLabelStyle: const TextStyle(fontSize: 11),
-        onTap: (index) {
-          if (index == 1) {
-            Navigator.push(
-              context,
-              MaterialPageRoute<void>(builder: (_) => const OrderScreen()),
-            );
-          } else if (index == 2) {
-            Navigator.push(
-              context,
-              MaterialPageRoute<void>(builder: (_) => const MessagesScreen()),
-            );
-          } else if (index == 3) {
-            Navigator.push(
-              context,
-              MaterialPageRoute<void>(builder: (_) => const ProfileScreen()),
+      body: FutureBuilder<_DashboardOrdersData>(
+        future: _dashboardOrdersFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return const Center(
+              child: Text(
+                'Failed to load orders',
+                style: TextStyle(color: Color(0xFF64748B)),
+              ),
             );
           }
+
+          final dashboardOrders =
+              snapshot.data ??
+              const _DashboardOrdersData(activeOrders: [], recentOrders: []);
+          final activeOrders = dashboardOrders.activeOrders;
+          final recentOrders = dashboardOrders.recentOrders;
+
+          return RefreshIndicator(
+            onRefresh: () async {
+              _reloadDashboardOrders();
+              await _dashboardOrdersFuture;
+            },
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              children: [
+                const _GreetingSection(),
+                const SizedBox(height: 20),
+                _OrderWaterCard(
+                  onTap: () {
+                    CustomerNavController.instance.goTo(1);
+                  },
+                ),
+                const SizedBox(height: 28),
+                const _SectionHeader(title: 'Active Orders'),
+                const SizedBox(height: 12),
+                _ActiveOrdersList(activeOrders: activeOrders),
+                const SizedBox(height: 28),
+                _RecentOrdersHeader(
+                  onSeeAllTap: () {
+                    CustomerNavController.instance.goTo(2);
+                  },
+                ),
+                const SizedBox(height: 12),
+                _RecentOrdersList(recentOrders: recentOrders),
+                const SizedBox(height: 16),
+              ],
+            ),
+          );
         },
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_rounded),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.receipt_long_rounded),
-            label: 'Orders',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble_outline_rounded),
-            label: 'Messages',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline_rounded),
-            label: 'Profile',
-          ),
-        ],
       ),
     );
   }
+}
+
+class _DashboardOrdersData {
+  const _DashboardOrdersData({
+    required this.activeOrders,
+    required this.recentOrders,
+  });
+
+  final List<Map<String, dynamic>> activeOrders;
+  final List<Map<String, dynamic>> recentOrders;
 }
 
 class _GreetingSection extends StatelessWidget {
@@ -130,14 +184,16 @@ class _GreetingSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    final customerName = CustomerSession.name ?? 'Customer';
+
+    return Row(
       children: [
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Hello, Customer 👋',
+                'Hello, $customerName 👋',
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
@@ -282,20 +338,41 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _ActiveOrdersList extends StatelessWidget {
-  const _ActiveOrdersList();
+  const _ActiveOrdersList({required this.activeOrders});
+
+  final List<Map<String, dynamic>> activeOrders;
 
   @override
   Widget build(BuildContext context) {
+    if (activeOrders.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
+        ),
+        child: const Text(
+          'No active orders',
+          style: TextStyle(
+            fontSize: 13,
+            color: Color(0xFF64748B),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
     return SizedBox(
       height: 175,
       child: ListView(
         scrollDirection: Axis.horizontal,
-        children: const [
-          _ActiveOrderCard(status: 'On the way'),
-          SizedBox(width: 12),
-          _ActiveOrderCard(status: 'Preparing'),
-          SizedBox(width: 12),
-          _ActiveOrderCard(status: 'Driver Assigned'),
+        children: [
+          for (int i = 0; i < activeOrders.length; i++) ...[
+            _ActiveOrderCard(order: activeOrders[i]),
+            if (i != activeOrders.length - 1) const SizedBox(width: 12),
+          ],
         ],
       ),
     );
@@ -303,51 +380,63 @@ class _ActiveOrdersList extends StatelessWidget {
 }
 
 class _ActiveOrderCard extends StatelessWidget {
-  const _ActiveOrderCard({required this.status});
+  const _ActiveOrderCard({required this.order});
 
-  final String status;
+  final Map<String, dynamic> order;
 
-  int _stepFromStatus() {
-    switch (status) {
-      case 'Preparing':
-        return 1;
-      case 'On the way':
-        return 2;
-      case 'Delivered':
-        return 3;
+  String _status() => '${order['status'] ?? ''}'.toLowerCase();
+
+  String _statusLabel() {
+    switch (_status()) {
+      case 'pending':
+        return 'Pending';
+      case 'on_the_way':
+        return 'On the Way';
+      case 'preparing':
+        return 'Preparing';
       default:
-        return 0;
+        return '${order['status'] ?? 'Unknown'}';
     }
   }
 
   Color _badgeColor() {
-    switch (status) {
-      case 'On the way':
-        return const Color(0xFF15803D);
-      case 'Preparing':
+    switch (_status()) {
+      case 'pending':
         return const Color(0xFFB45309);
-      case 'Driver Assigned':
+      case 'on_the_way':
         return const Color(0xFF1D4ED8);
+      case 'preparing':
+        return const Color(0xFF9333EA);
       default:
         return const Color(0xFF64748B);
     }
   }
 
   Color _badgeBg() {
-    switch (status) {
-      case 'On the way':
-        return const Color(0xFFDCFCE7);
-      case 'Preparing':
+    switch (_status()) {
+      case 'pending':
         return const Color(0xFFFEF3C7);
-      case 'Driver Assigned':
+      case 'on_the_way':
         return const Color(0xFFDBEAFE);
+      case 'preparing':
+        return const Color(0xFFF3E8FF);
       default:
         return const Color(0xFFF1F5F9);
     }
   }
 
+  String _orderLabel() {
+    final id = '${order['id'] ?? ''}';
+    if (id.isEmpty) return 'Order';
+    final short = id.length > 8 ? id.substring(0, 8) : id;
+    return 'Order #$short';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final gallons = order['gallons']?.toString() ?? '0';
+    final address = '${order['address'] ?? 'No address'}';
+
     return Container(
       width: 160,
       padding: const EdgeInsets.all(14),
@@ -367,12 +456,13 @@ class _ActiveOrderCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Order #00${_stepFromStatus() + 4}',
+            _orderLabel(),
             style: const TextStyle(
               fontSize: 10,
               color: Color(0xFF94A3B8),
               letterSpacing: 0.3,
             ),
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 6),
           Container(
@@ -382,7 +472,7 @@ class _ActiveOrderCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
-              status,
+              _statusLabel(),
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
@@ -391,13 +481,21 @@ class _ActiveOrderCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            '5 Gallons x2',
-            style: TextStyle(
+          Text(
+            '$gallons Gallons',
+            style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w700,
               color: Color(0xFF0F172A),
             ),
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            address,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           const Spacer(),
           SizedBox(
@@ -407,10 +505,7 @@ class _ActiveOrderCard extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute<void>(
-                    builder: (_) => TrackOrderScreen(
-                      status: status,
-                      deliveryType: status == 'Preparing' ? 'scheduled' : 'now',
-                    ),
+                    builder: (_) => CustomerTrackOrderScreen(order: order),
                   ),
                 );
               },
@@ -436,17 +531,38 @@ class _ActiveOrderCard extends StatelessWidget {
 }
 
 class _RecentOrdersList extends StatelessWidget {
-  const _RecentOrdersList();
+  const _RecentOrdersList({required this.recentOrders});
+
+  final List<Map<String, dynamic>> recentOrders;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    if (recentOrders.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
+        ),
+        child: const Text(
+          'No recent orders',
+          style: TextStyle(
+            fontSize: 13,
+            color: Color(0xFF64748B),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
+    return Column(
       children: [
-        _RecentOrderTile(orderId: 'Order #001', price: '₱250', date: 'Apr 11'),
-        SizedBox(height: 8),
-        _RecentOrderTile(orderId: 'Order #002', price: '₱180', date: 'Apr 10'),
-        SizedBox(height: 8),
-        _RecentOrderTile(orderId: 'Order #003', price: '₱320', date: 'Apr 08'),
+        for (int i = 0; i < recentOrders.length; i++) ...[
+          _RecentOrderTile(order: recentOrders[i]),
+          if (i != recentOrders.length - 1) const SizedBox(height: 8),
+        ],
       ],
     );
   }
@@ -487,15 +603,93 @@ class _RecentOrdersHeader extends StatelessWidget {
 }
 
 class _RecentOrderTile extends StatelessWidget {
-  const _RecentOrderTile({
-    required this.orderId,
-    required this.price,
-    required this.date,
-  });
+  const _RecentOrderTile({required this.order});
 
-  final String orderId;
-  final String price;
-  final String date;
+  final Map<String, dynamic> order;
+
+  String _orderLabel() {
+    final id = '${order['id'] ?? ''}';
+    if (id.isEmpty) return 'Order';
+    final short = id.length > 8 ? id.substring(0, 8) : id;
+    return 'Order #$short';
+  }
+
+  String _priceLabel() {
+    final totalPrice = order['total_price'];
+    if (totalPrice is num) {
+      return '₱${totalPrice.toStringAsFixed(0)}';
+    }
+    return '₱0';
+  }
+
+  String _dateLabel() {
+    final createdAt = '${order['created_at'] ?? ''}';
+    final parsed = DateTime.tryParse(createdAt);
+    if (parsed == null) return 'Unknown date';
+    return '${_monthName(parsed.month)} ${parsed.day}';
+  }
+
+  String _status() => '${order['status'] ?? ''}'.toLowerCase();
+
+  String _statusLabel() {
+    switch (_status()) {
+      case 'delivered':
+      case 'completed':
+        return 'Delivered';
+      case 'on_the_way':
+        return 'On the Way';
+      case 'pending':
+        return 'Pending';
+      default:
+        return '${order['status'] ?? 'Unknown'}';
+    }
+  }
+
+  Color _statusColor() {
+    switch (_status()) {
+      case 'pending':
+        return const Color(0xFFEA580C);
+      case 'on_the_way':
+        return const Color(0xFF2563EB);
+      case 'delivered':
+      case 'completed':
+        return const Color(0xFF16A34A);
+      default:
+        return const Color(0xFF64748B);
+    }
+  }
+
+  Color _statusBgColor() {
+    switch (_status()) {
+      case 'pending':
+        return const Color(0xFFFFEDD5);
+      case 'on_the_way':
+        return const Color(0xFFDBEAFE);
+      case 'delivered':
+      case 'completed':
+        return const Color(0xFFDCFCE7);
+      default:
+        return const Color(0xFFF1F5F9);
+    }
+  }
+
+  String _monthName(int month) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return months[month - 1];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -528,11 +722,11 @@ class _RecentOrderTile extends StatelessWidget {
           ),
         ),
         title: Text(
-          orderId,
+          _orderLabel(),
           style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
         ),
         subtitle: Text(
-          date,
+          _dateLabel(),
           style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
         ),
         trailing: Column(
@@ -540,7 +734,7 @@ class _RecentOrderTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
-              price,
+              _priceLabel(),
               style: const TextStyle(
                 color: Color(0xFF2563EB),
                 fontWeight: FontWeight.w700,
@@ -551,14 +745,14 @@ class _RecentOrderTile extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
-                color: const Color(0xFFDCFCE7),
+                color: _statusBgColor(),
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Text(
-                'Delivered',
+              child: Text(
+                _statusLabel(),
                 style: TextStyle(
                   fontSize: 10,
-                  color: Color(0xFF15803D),
+                  color: _statusColor(),
                   fontWeight: FontWeight.w500,
                 ),
               ),

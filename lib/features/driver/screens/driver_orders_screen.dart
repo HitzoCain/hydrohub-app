@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 
 import 'driver_dashboard_screen.dart';
 import 'driver_map_screen.dart';
@@ -17,34 +19,142 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
   static const Color _background = Color(0xFFF6F8FB);
   static const Color _primaryBlue = Color(0xFF2563EB);
 
-  int _selectedFilterIndex = 0;
+  Future<List<_DeliveryItemData>> _activeOrdersFuture =
+      Future<List<_DeliveryItemData>>.value(const <_DeliveryItemData>[]);
+  Future<List<_DeliveryItemData>> _completedOrdersFuture =
+      Future<List<_DeliveryItemData>>.value(const <_DeliveryItemData>[]);
+  int _selectedTabIndex = 0;
 
-  static const List<String> _filters = ['Active', 'Completed'];
+  @override
+  void initState() {
+    super.initState();
+    _activeOrdersFuture = _fetchActiveOrders();
+    _completedOrdersFuture = _fetchCompletedOrders();
+  }
 
-  static const List<_DeliveryItemData> _deliveries = [
-    _DeliveryItemData(
-      orderId: 'Order #001',
-      customerName: 'Juan Dela Cruz',
-      address: 'Blk 8 Lot 12, Quezon City',
-      gallons: 5,
-      status: _DeliveryStatus.delivering,
-    ),
-    _DeliveryItemData(
-      orderId: 'Order #004',
-      customerName: 'Maria Santos',
-      address: 'P. Burgos St, Makati City',
-      gallons: 3,
-      status: _DeliveryStatus.completed,
-    ),
-  ];
+  Future<List<_DeliveryItemData>> _fetchActiveOrders() async {
+    final driverId = await DriverSession.getDriverId();
 
-  List<_DeliveryItemData> get _filteredDeliveries {
-    final selectedStatus = _selectedFilterIndex == 0
-        ? _DeliveryStatus.delivering
-        : _DeliveryStatus.completed;
-    return _deliveries
-        .where((delivery) => delivery.status == selectedStatus)
+    if (driverId == null || driverId.trim().isEmpty) {
+      return [];
+    }
+
+    final orders = await Supabase.instance.client
+        .from('orders')
+        .select()
+        .eq('driver_id', driverId)
+        .inFilter('status', ['assigned', 'on_the_way']);
+
+    return orders
+        .whereType<Map<String, dynamic>>()
+        .map(_mapActiveOrder)
         .toList();
+  }
+
+  Future<List<_DeliveryItemData>> _fetchCompletedOrders() async {
+    final driverId = await DriverSession.getDriverId();
+
+    if (driverId == null || driverId.trim().isEmpty) {
+      return [];
+    }
+
+    final orders = await Supabase.instance.client
+        .from('orders')
+        .select()
+        .eq('driver_id', driverId)
+        .eq('status', 'delivered')
+        .order('created_at', ascending: false);
+
+    return orders
+        .whereType<Map<String, dynamic>>()
+        .map(_mapCompletedOrder)
+        .toList();
+  }
+
+  String _formatDate(dynamic value) {
+    final raw = value?.toString();
+    if (raw == null || raw.trim().isEmpty) {
+      return 'Unknown date';
+    }
+
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) {
+      return raw;
+    }
+
+    final date = parsed.toLocal();
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
+  _DeliveryItemData _mapActiveOrder(Map<String, dynamic> order) {
+    String textOf(dynamic value, {required String fallback}) {
+      final text = value?.toString().trim();
+      if (text == null || text.isEmpty) {
+        return fallback;
+      }
+      return text;
+    }
+
+    int gallonsOf(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse(value?.toString() ?? '') ?? 0;
+    }
+
+    final orderId = textOf(order['id'], fallback: 'Unknown');
+    final customerName = textOf(order['customer_name'], fallback: 'Customer');
+    final address = textOf(order['address'], fallback: 'No address provided');
+    final gallons = gallonsOf(order['gallons']);
+
+    return _DeliveryItemData(
+      orderId: 'Order #$orderId',
+      customerName: customerName,
+      address: address,
+      gallons: gallons,
+      status: _DeliveryStatus.delivering,
+    );
+  }
+
+  _DeliveryItemData _mapCompletedOrder(Map<String, dynamic> order) {
+    String textOf(dynamic value, {required String fallback}) {
+      final text = value?.toString().trim();
+      if (text == null || text.isEmpty) {
+        return fallback;
+      }
+      return text;
+    }
+
+    int gallonsOf(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse(value?.toString() ?? '') ?? 0;
+    }
+
+    final orderId = textOf(order['id'], fallback: 'Unknown');
+    final customerName = textOf(order['customer_name'], fallback: 'Customer');
+    final address = textOf(order['address'], fallback: 'No address provided');
+    final gallons = gallonsOf(order['gallons']);
+    final deliveredDate = _formatDate(
+      order['delivered_at'] ?? order['updated_at'] ?? order['created_at'],
+    );
+
+    return _DeliveryItemData(
+      orderId: 'Order #$orderId',
+      customerName: customerName,
+      address: address,
+      gallons: gallons,
+      status: _DeliveryStatus.completed,
+      deliveredDate: deliveredDate,
+    );
+  }
+
+  void _refreshOrders() {
+    setState(() {
+      _activeOrdersFuture = _fetchActiveOrders();
+      _completedOrdersFuture = _fetchCompletedOrders();
+    });
   }
 
   @override
@@ -68,51 +178,31 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: _FilterTabs(
-                filters: _filters,
-                selectedIndex: _selectedFilterIndex,
-                onSelected: (index) {
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: _OrdersTabBar(
+                selectedIndex: _selectedTabIndex,
+                onChanged: (index) {
                   setState(() {
-                    _selectedFilterIndex = index;
+                    _selectedTabIndex = index;
                   });
                 },
               ),
             ),
             Expanded(
-              child: _filteredDeliveries.isEmpty
-                  ? const _EmptyState()
-                  : ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      itemCount: _filteredDeliveries.length,
-                      itemBuilder: (context, index) {
-                        final delivery = _filteredDeliveries[index];
-                        return Padding(
-                          padding: EdgeInsets.only(
-                            bottom:
-                                index == _filteredDeliveries.length - 1 ? 0 : 12,
-                          ),
-                          child: _DeliveryCard(
-                            delivery: delivery,
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute<void>(
-                                  builder: (_) => DriverOrderDetailsScreen(
-                                    customerName: delivery.customerName,
-                                    orderId: delivery.orderId,
-                                    status: delivery.status.label,
-                                    contactNumber: '+63 912 345 6789',
-                                    address: delivery.address,
-                                    totalGallons: delivery.gallons,
-                                    exchangeContainers: 3,
-                                    newContainers: 2,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        );
+              child: _selectedTabIndex == 0
+                  ? _ActiveOrdersList(
+                      ordersFuture: _activeOrdersFuture,
+                      onRefresh: () async {
+                        _refreshOrders();
+                        await _activeOrdersFuture;
+                      },
+                      onOrderCompleted: _refreshOrders,
+                    )
+                  : _CompletedOrdersList(
+                      ordersFuture: _completedOrdersFuture,
+                      onRefresh: () async {
+                        _refreshOrders();
+                        await _completedOrdersFuture;
                       },
                     ),
             ),
@@ -149,9 +239,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
           } else if (index == 3) {
             Navigator.push(
               context,
-              MaterialPageRoute<void>(
-                builder: (_) => const DriverMapScreen(),
-              ),
+              MaterialPageRoute<void>(builder: (_) => const DriverMapScreen()),
             );
           } else if (index == 4) {
             Navigator.push(
@@ -163,10 +251,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
           }
         },
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Dashboard',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Dashboard'),
           BottomNavigationBarItem(
             icon: Icon(Icons.receipt_long_outlined),
             label: 'Orders',
@@ -189,16 +274,11 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
   }
 }
 
-class _FilterTabs extends StatelessWidget {
-  const _FilterTabs({
-    required this.filters,
-    required this.selectedIndex,
-    required this.onSelected,
-  });
+class _OrdersTabBar extends StatelessWidget {
+  const _OrdersTabBar({required this.selectedIndex, required this.onChanged});
 
-  final List<String> filters;
   final int selectedIndex;
-  final ValueChanged<int> onSelected;
+  final ValueChanged<int> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -209,48 +289,211 @@ class _FilterTabs extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
-        children: List<Widget>.generate(filters.length, (index) {
-          final isSelected = index == selectedIndex;
-          return Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(
-                right: index < filters.length - 1 ? 8 : 0,
-              ),
-              child: GestureDetector(
-                onTap: () => onSelected(index),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  decoration: BoxDecoration(
-                    color: isSelected ? Colors.white : Colors.transparent,
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: isSelected
-                        ? const [
-                            BoxShadow(
-                              color: Color(0x142563EB),
-                              blurRadius: 8,
-                              offset: Offset(0, 2),
-                            ),
-                          ]
-                        : null,
-                  ),
-                  child: Text(
-                    filters[index],
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: isSelected
-                          ? const Color(0xFF1E3A8A)
-                          : const Color(0xFF64748B),
+        children: [
+          _TabButton(
+            label: 'Active Orders',
+            isSelected: selectedIndex == 0,
+            onTap: () => onChanged(0),
+          ),
+          const SizedBox(width: 8),
+          _TabButton(
+            label: 'Completed Orders',
+            isSelected: selectedIndex == 1,
+            onTap: () => onChanged(1),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TabButton extends StatelessWidget {
+  const _TabButton({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: isSelected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x142563EB),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
                     ),
-                  ),
-                ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: isSelected
+                  ? const Color(0xFF1E3A8A)
+                  : const Color(0xFF64748B),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActiveOrdersList extends StatelessWidget {
+  const _ActiveOrdersList({
+    required this.ordersFuture,
+    required this.onRefresh,
+    required this.onOrderCompleted,
+  });
+
+  final Future<List<_DeliveryItemData>> ordersFuture;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onOrderCompleted;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<_DeliveryItemData>>(
+      future: ordersFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Failed to load active deliveries: ${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF64748B)),
               ),
             ),
           );
-        }),
-      ),
+        }
+
+        final deliveries = snapshot.data ?? const <_DeliveryItemData>[];
+        if (deliveries.isEmpty) {
+          return const _EmptyState(message: 'No active deliveries yet');
+        }
+
+        return RefreshIndicator(
+          onRefresh: onRefresh,
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            itemCount: deliveries.length,
+            itemBuilder: (context, index) {
+              final delivery = deliveries[index];
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: index == deliveries.length - 1 ? 0 : 12,
+                ),
+                child: _DeliveryCard(
+                  delivery: delivery,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => DriverOrderDetailsScreen(
+                          customerName: delivery.customerName,
+                          orderId: delivery.orderId,
+                          status: delivery.status.label,
+                          contactNumber: '+63 912 345 6789',
+                          address: delivery.address,
+                          totalGallons: delivery.gallons,
+                          exchangeContainers: 3,
+                          newContainers: 2,
+                          onOrderCompleted: onOrderCompleted,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CompletedOrdersList extends StatelessWidget {
+  const _CompletedOrdersList({
+    required this.ordersFuture,
+    required this.onRefresh,
+  });
+
+  final Future<List<_DeliveryItemData>> ordersFuture;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<_DeliveryItemData>>(
+      future: ordersFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Failed to load completed deliveries: ${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF64748B)),
+              ),
+            ),
+          );
+        }
+
+        final deliveries = snapshot.data ?? const <_DeliveryItemData>[];
+        if (deliveries.isEmpty) {
+          return const _EmptyState(message: 'No completed deliveries yet');
+        }
+
+        return RefreshIndicator(
+          onRefresh: onRefresh,
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            itemCount: deliveries.length,
+            itemBuilder: (context, index) {
+              final delivery = deliveries[index];
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: index == deliveries.length - 1 ? 0 : 12,
+                ),
+                child: _DeliveryCard(
+                  delivery: delivery,
+                  onTap: null,
+                  isReadOnly: true,
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -258,11 +501,26 @@ class _FilterTabs extends StatelessWidget {
 class _DeliveryCard extends StatelessWidget {
   const _DeliveryCard({
     required this.delivery,
-    required this.onTap,
+    this.onTap,
+    this.isReadOnly = false,
   });
 
   final _DeliveryItemData delivery;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool isReadOnly;
+
+  String _shortOrderId(String value) {
+    const prefix = 'Order #';
+    final rawId = value.startsWith(prefix)
+        ? value.substring(prefix.length)
+        : value;
+
+    if (rawId.length <= 12) {
+      return value;
+    }
+
+    return '$prefix${rawId.substring(0, 4)}...${rawId.substring(rawId.length - 4)}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -336,19 +594,33 @@ class _DeliveryCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      delivery.orderId,
+                      _shortOrderId(delivery.orderId),
                       style: const TextStyle(
                         fontSize: 12,
                         color: Color(0xFF64748B),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    if (isReadOnly && delivery.deliveredDate != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Delivered: ${delivery.deliveredDate}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF15803D),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
               const SizedBox(width: 10),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: statusTheme.background,
                   borderRadius: BorderRadius.circular(20),
@@ -371,7 +643,9 @@ class _DeliveryCard extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({required this.message});
+
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -390,18 +664,18 @@ class _EmptyState extends StatelessWidget {
             ),
           ],
         ),
-        child: const Column(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
+            const Icon(
               Icons.assignment_late_outlined,
               color: Color(0xFF94A3B8),
               size: 42,
             ),
-            SizedBox(height: 10),
+            const SizedBox(height: 10),
             Text(
-              'No assigned deliveries yet',
-              style: TextStyle(
+              message,
+              style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
                 color: Color(0xFF0F172A),
@@ -421,6 +695,7 @@ class _DeliveryItemData {
     required this.address,
     required this.gallons,
     required this.status,
+    this.deliveredDate,
   });
 
   final String orderId;
@@ -428,13 +703,11 @@ class _DeliveryItemData {
   final String address;
   final int gallons;
   final _DeliveryStatus status;
+  final String? deliveredDate;
 }
 
 class _StatusTheme {
-  const _StatusTheme({
-    required this.foreground,
-    required this.background,
-  });
+  const _StatusTheme({required this.foreground, required this.background});
 
   final Color foreground;
   final Color background;
