@@ -39,6 +39,22 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     loadDashboard();
   }
 
+  Future<List<String>> _currentDriverIds() async {
+    final ids = <String>{};
+
+    final sessionId = await DriverSession.getDriverId();
+    if (sessionId != null && sessionId.trim().isNotEmpty) {
+      ids.add(sessionId.trim());
+    }
+
+    final authUserId = Supabase.instance.client.auth.currentUser?.id;
+    if (authUserId != null && authUserId.trim().isNotEmpty) {
+      ids.add(authUserId.trim());
+    }
+
+    return ids.toList(growable: false);
+  }
+
   Future<void> _initializeLocationService() async {
     final driverId = widget.driverId ?? await DriverSession.getDriverId();
     if (driverId != null && driverId.isNotEmpty) {
@@ -136,16 +152,19 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   }
 
   Future<List<_DeliveryData>> _fetchActiveOrders() async {
-    final driverId = await DriverSession.getDriverId();
-    if (driverId == null || driverId.trim().isEmpty) {
+    final driverIds = await _currentDriverIds();
+    if (driverIds.isEmpty) {
       return const <_DeliveryData>[];
     }
 
-    final activeOrders = await Supabase.instance.client
+    final activeOrdersQuery = Supabase.instance.client
         .from('orders')
         .select()
-        .eq('driver_id', driverId)
-        .inFilter('status', ['assigned', 'on_the_way']);
+        .inFilter('status', ['assigned', 'in_progress', 'on_the_way']);
+
+    final activeOrders = driverIds.length == 1
+        ? await activeOrdersQuery.eq('driver_id', driverIds.first)
+        : await activeOrdersQuery.inFilter('driver_id', driverIds);
 
     String textOf(dynamic value, {required String fallback}) {
       final text = value?.toString().trim();
@@ -153,8 +172,34 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
       return text;
     }
 
+    double? toDouble(dynamic value) {
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
+    String displayAddressOf(Map<String, dynamic> row) {
+      final addressText = row['address_text']?.toString().trim();
+      if (addressText != null && addressText.isNotEmpty) {
+        return addressText;
+      }
+
+      final lat = toDouble(row['latitude']);
+      final lng = toDouble(row['longitude']);
+      if (lat != null && lng != null) {
+        return 'Lat: ${lat.toStringAsFixed(6)}, Lng: ${lng.toStringAsFixed(6)}';
+      }
+
+      return textOf(row['address'], fallback: 'No address provided');
+    }
+
     String statusOf(dynamic value) {
       final status = value?.toString().toLowerCase().trim() ?? '';
+      if (status == 'in_progress') {
+        return 'on_the_way';
+      }
       if (status == 'assigned' ||
           status == 'on_the_way' ||
           status == 'delivered') {
@@ -166,7 +211,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     return activeOrders.whereType<Map<String, dynamic>>().map((order) {
       final orderId = textOf(order['id'], fallback: 'Unknown');
       final customerName = textOf(order['customer_name'], fallback: 'Customer');
-      final address = textOf(order['address'], fallback: 'No address provided');
+      final address = displayAddressOf(order);
 
       return _DeliveryData(
         orderId: orderId,

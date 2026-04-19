@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/login_screen.dart';
+import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,7 +31,34 @@ class AquaEnLavadaApp extends StatelessWidget {
           surface: const Color(0xFFF6F8FB),
         ),
       ),
-      home: const LoginScreen(),
+      home: const _AuthGate(),
+    );
+  }
+}
+
+class _AuthGate extends StatefulWidget {
+  const _AuthGate();
+
+  @override
+  State<_AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<_AuthGate> {
+  @override
+  Widget build(BuildContext context) {
+    final currentSession = Supabase.instance.client.auth.currentSession;
+
+    return StreamBuilder<AuthState>(
+      stream: Supabase.instance.client.auth.onAuthStateChange,
+      builder: (context, snapshot) {
+        final session = snapshot.data?.session ?? currentSession;
+
+        if (session == null) {
+          return const LoginScreen();
+        }
+
+        return const CustomerNavShell();
+      },
     );
   }
 }

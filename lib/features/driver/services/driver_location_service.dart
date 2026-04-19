@@ -100,7 +100,7 @@ class DriverLocationService {
             .from('orders')
             .update({'driver_lat': latitude, 'driver_lng': longitude})
             .eq('driver_id', driverId)
-            .inFilter('status', ['assigned', 'on_the_way']);
+          .inFilter('status', ['assigned', 'in_progress']);
 
         debugPrint('[DriverLocation] Updated active orders for driver');
       }

@@ -1,11 +1,16 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'map_picker_screen.dart';
 
 class AddressScreen extends StatefulWidget {
-  const AddressScreen({super.key});
+  const AddressScreen({super.key, this.popOnAddressChange = false});
+
+  final bool popOnAddressChange;
 
   @override
   State<AddressScreen> createState() => _AddressScreenState();
@@ -18,8 +23,6 @@ class _AddressScreenState extends State<AddressScreen> {
   List<_SavedAddress> _savedAddresses = const [];
   bool _isLoadingAddresses = false;
   String? _selectedAddress;
-  double? _selectedLat;
-  double? _selectedLng;
 
   @override
   void initState() {
@@ -83,6 +86,82 @@ class _AddressScreenState extends State<AddressScreen> {
     return null;
   }
 
+  String? _cleanText(dynamic value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) {
+      return null;
+    }
+    return text;
+  }
+
+  String _latLngFallbackAddress(double lat, double lng) {
+    return 'Lat: ${lat.toStringAsFixed(6)}, Lng: ${lng.toStringAsFixed(6)}';
+  }
+
+  String _buildAddressTextFromNominatim(Map<String, dynamic> body) {
+    final fallback = _cleanText(body['display_name']);
+    final address = body['address'];
+    if (address is! Map<String, dynamic>) {
+      return fallback ?? '';
+    }
+
+    final road = _cleanText(address['road']);
+    final barangay =
+        _cleanText(address['suburb']) ?? _cleanText(address['village']);
+    final city = _cleanText(address['city']) ?? _cleanText(address['town']);
+
+    final parts = <String>[];
+    if (road != null) {
+      parts.add(road);
+    }
+    if (barangay != null) {
+      parts.add(barangay);
+    }
+    if (city != null) {
+      parts.add(city);
+    }
+
+    if (parts.isNotEmpty) {
+      return parts.join(', ');
+    }
+
+    return fallback ?? '';
+  }
+
+  Future<String> _reverseGeocodeAddressText(double lat, double lng) async {
+    final fallbackAddress = _latLngFallbackAddress(lat, lng);
+    final uri = Uri.parse(
+      'https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json',
+    );
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: const {'User-Agent': 'HydroHub App (your@email.com)'},
+      );
+
+      if (response.body.trim().isEmpty) {
+        return fallbackAddress;
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        return fallbackAddress;
+      }
+
+      final addressText = _buildAddressTextFromNominatim(decoded);
+      if (addressText.isNotEmpty) {
+        return addressText;
+      }
+
+      final displayName = _cleanText(decoded['display_name']);
+      return displayName ?? fallbackAddress;
+    } catch (e) {
+      debugPrint('Reverse geocoding failed: $e');
+      return fallbackAddress;
+    }
+  }
+
   Future<void> _openMapPickerAndSave() async {
     final result = await Navigator.push<LatLng>(
       context,
@@ -93,13 +172,13 @@ class _AddressScreenState extends State<AddressScreen> {
       return;
     }
 
-    final selectedAddress =
-        'Lat: ${result.latitude.toStringAsFixed(6)}, Lng: ${result.longitude.toStringAsFixed(6)}';
+    final selectedAddress = await _reverseGeocodeAddressText(
+      result.latitude,
+      result.longitude,
+    );
 
     if (!mounted) return;
     setState(() {
-      _selectedLat = result.latitude;
-      _selectedLng = result.longitude;
       _selectedAddress = selectedAddress;
     });
 
@@ -113,6 +192,7 @@ class _AddressScreenState extends State<AddressScreen> {
         'user_id': user.id,
         'label': 'Home',
         'address': selectedAddress,
+        'address_text': selectedAddress,
         'latitude': result.latitude,
         'longitude': result.longitude,
       });
@@ -121,6 +201,11 @@ class _AddressScreenState extends State<AddressScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Address saved successfully')),
       );
+
+      if (widget.popOnAddressChange) {
+        Navigator.of(context).pop(true);
+        return;
+      }
 
       await _loadSavedAddresses();
     } catch (e) {
@@ -225,6 +310,12 @@ class _AddressScreenState extends State<AddressScreen> {
                               content: Text('Address updated successfully'),
                             ),
                           );
+
+                          if (widget.popOnAddressChange) {
+                            Navigator.of(context).pop(true);
+                            return;
+                          }
+
                           await _loadSavedAddresses();
                         } catch (e) {
                           if (!context.mounted) return;
@@ -303,6 +394,10 @@ class _AddressScreenState extends State<AddressScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Address deleted successfully')),
       );
+
+      if (widget.popOnAddressChange) {
+        Navigator.of(context).pop(true);
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:aqua_in_laba_app/features/auth/screens/login_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/edit_profile_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/address_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/support_screen.dart';
+import 'package:aqua_in_laba_app/features/auth/services/logout_service.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -259,12 +259,7 @@ class _LogoutButton extends StatelessWidget {
       width: double.infinity,
       height: 50,
       child: ElevatedButton(
-        onPressed: () {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
-            (route) => false,
-          );
-        },
+        onPressed: () => logoutAndRedirectToLogin(context),
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF2563EB),
           foregroundColor: Colors.white,

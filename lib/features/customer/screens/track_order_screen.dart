@@ -45,6 +45,9 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
     if (raw.contains('delivered') || raw.contains('completed')) {
       return 'delivered';
     }
+    if (raw.contains('assigned')) {
+      return 'assigned';
+    }
     if (raw.contains('scheduled')) {
       return 'scheduled';
     }
@@ -92,22 +95,26 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
 
   String _statusTitle() {
     switch (_normalizedStatus) {
+      case 'assigned':
+        return 'Driver Assigned';
       case 'scheduled':
         return 'Scheduled Delivery';
       case 'delivered':
         return 'Delivered';
       case 'on_the_way':
       default:
-        return 'On the Way';
+        return 'Driver is on the way';
     }
   }
 
   String _statusMessage() {
     switch (_normalizedStatus) {
+      case 'assigned':
+        return 'Driver Assigned';
       case 'scheduled':
         return 'Your order is scheduled. Delivery will start at the selected time.';
       case 'delivered':
-        return 'Order completed successfully';
+        return 'Delivered';
       case 'on_the_way':
       default:
         return 'Driver is on the way';
@@ -523,7 +530,10 @@ class _CustomerTrackOrderScreenState extends State<CustomerTrackOrderScreen> {
   String _normalizedStatus() {
     final raw = _status().replaceAll(' ', '_');
     if (raw == 'completed') return 'delivered';
-    if (raw == 'delivering') return 'on_the_way';
+    if (raw == 'delivering' || raw == 'in_progress' || raw == 'out_for_delivery') {
+      return 'on_the_way';
+    }
+    if (raw == 'accepted' || raw == 'preparing') return 'assigned';
     if (raw.isEmpty) return 'pending';
     return raw;
   }
@@ -549,7 +559,7 @@ class _CustomerTrackOrderScreenState extends State<CustomerTrackOrderScreen> {
       case 'assigned':
         return 'Driver Assigned';
       case 'on_the_way':
-        return 'On the Way';
+        return 'Driver is on the way';
       case 'delivered':
         return 'Delivered';
       default:
@@ -1116,8 +1126,13 @@ int getStepIndex(String status) {
   if (normalized == 'completed') {
     return 3; // delivered
   }
-  if (normalized == 'delivering') {
+  if (normalized == 'delivering' ||
+      normalized == 'in_progress' ||
+      normalized == 'out_for_delivery') {
     return 2; // on_the_way
+  }
+  if (normalized == 'accepted' || normalized == 'preparing') {
+    return 1; // assigned
   }
   if (normalized.isEmpty) {
     return 0; // pending
@@ -1142,10 +1157,15 @@ String getStatusMessage(String status) {
   final normalized = status.trim().toLowerCase().replaceAll(' ', '_');
 
   if (normalized == 'completed') {
-    return 'Order delivered successfully';
+    return 'Delivered';
   }
-  if (normalized == 'delivering') {
-    return 'Driver is on the way to your location';
+  if (normalized == 'delivering' ||
+      normalized == 'in_progress' ||
+      normalized == 'out_for_delivery') {
+    return 'Driver is on the way';
+  }
+  if (normalized == 'accepted' || normalized == 'preparing') {
+    return 'Driver Assigned';
   }
   if (normalized.isEmpty) {
     return 'Waiting for store confirmation';
@@ -1155,11 +1175,11 @@ String getStatusMessage(String status) {
     case 'pending':
       return 'Waiting for store confirmation';
     case 'assigned':
-      return 'Driver has been assigned';
+      return 'Driver Assigned';
     case 'on_the_way':
-      return 'Driver is on the way to your location';
+      return 'Driver is on the way';
     case 'delivered':
-      return 'Order delivered successfully';
+      return 'Delivered';
     default:
       return 'Order status update';
   }

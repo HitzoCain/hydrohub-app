@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:aqua_in_laba_app/features/auth/screens/login_screen.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
+import 'package:aqua_in_laba_app/features/auth/services/logout_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'driver_dashboard_screen.dart';
 import 'driver_edit_profile_screen.dart';
@@ -40,6 +41,8 @@ class DriverProfileScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 children: const [
                   _ProfileHeader(),
+                  SizedBox(height: 16),
+                  _DriverAvailabilityCard(),
                   SizedBox(height: 16),
                   _DriverInfoCard(),
                   SizedBox(height: 16),
@@ -266,24 +269,30 @@ class _ActionsSection extends StatelessWidget {
 class _LogoutButton extends StatelessWidget {
   const _LogoutButton();
 
+  Future<void> _handleLogout(BuildContext context) async {
+    final driverId = await DriverSession.getDriverId();
+    if (driverId != null && driverId.trim().isNotEmpty) {
+      try {
+        await Supabase.instance.client
+            .from('employees')
+            .update({'driver_status': 'offline'})
+            .eq('id', driverId);
+      } catch (error) {
+        debugPrint('Unable to set driver offline during logout: $error');
+      }
+    }
+
+    if (!context.mounted) return;
+    await logoutAndRedirectToLogin(context);
+  }
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
       height: 50,
       child: ElevatedButton.icon(
-        onPressed: () async {
-          await DriverSession.clear();
-
-          if (!context.mounted) {
-            return;
-          }
-
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
-            (route) => false,
-          );
-        },
+        onPressed: () => _handleLogout(context),
         icon: const Icon(Icons.logout_rounded, size: 18),
         label: const Text(
           'Logout',
@@ -297,6 +306,179 @@ class _LogoutButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DriverAvailabilityCard extends StatefulWidget {
+  const _DriverAvailabilityCard();
+
+  @override
+  State<_DriverAvailabilityCard> createState() =>
+      _DriverAvailabilityCardState();
+}
+
+class _DriverAvailabilityCardState extends State<_DriverAvailabilityCard> {
+  bool _isOnline = false;
+  bool _isLoading = false;
+  bool _isInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvailability();
+  }
+
+  Future<void> _loadAvailability() async {
+    try {
+      final driverId = await DriverSession.getDriverId();
+      if (driverId == null || driverId.trim().isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _isOnline = false;
+          _isInitialized = true;
+        });
+        return;
+      }
+
+      final response = await Supabase.instance.client
+          .from('employees')
+          .select('driver_status')
+          .eq('id', driverId)
+          .maybeSingle();
+
+      final rawStatus = response?['driver_status']?.toString().toLowerCase();
+      if (!mounted) return;
+      setState(() {
+        _isOnline = rawStatus == 'online';
+        _isInitialized = true;
+      });
+    } catch (error) {
+      debugPrint('Failed to load driver availability: $error');
+      if (!mounted) return;
+      setState(() {
+        _isOnline = false;
+        _isInitialized = true;
+      });
+    }
+  }
+
+  Future<void> _toggleAvailability(bool value) async {
+    if (_isLoading) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final driverId = await DriverSession.getDriverId();
+      if (driverId == null || driverId.trim().isEmpty) {
+        throw Exception('Driver ID not found');
+      }
+
+      await Supabase.instance.client
+          .from('employees')
+          .update({'driver_status': value ? 'online' : 'offline'})
+          .eq('id', driverId);
+
+      if (!mounted) return;
+      setState(() {
+        _isOnline = value;
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(value ? 'You are now Online' : 'You are now Offline'),
+          backgroundColor: value
+              ? const Color(0xFF16A34A)
+              : const Color(0xFF64748B),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to update availability: $error'),
+          backgroundColor: const Color(0xFFDC2626),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final statusText = _isOnline ? 'Online' : 'Offline';
+    final statusColor = _isOnline
+        ? const Color(0xFF15803D)
+        : const Color(0xFF475569);
+    final statusBackground = _isOnline
+        ? const Color(0xFFDCFCE7)
+        : const Color(0xFFE2E8F0);
+
+    return _SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Availability',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    const Text(
+                      'Driver Status',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF64748B),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusBackground,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        statusText,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: statusColor,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _isOnline,
+                onChanged: (!_isInitialized || _isLoading)
+                    ? null
+                    : _toggleAvailability,
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

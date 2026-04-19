@@ -242,8 +242,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
         return 'Pending';
       case 'assigned':
         return 'Driver Assigned';
+      case 'on_the_way':
+        return 'Driver is on the way';
       case 'delivering':
-        return 'On the Way';
+        return 'Driver is on the way';
+      case 'delivered':
+        return 'Delivered';
       case 'completed':
         return 'Delivered';
       default:
@@ -257,8 +261,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
         return const Color(0xFFCA8A04);
       case 'assigned':
         return const Color(0xFF2563EB);
+      case 'on_the_way':
       case 'delivering':
         return const Color(0xFFEA580C);
+      case 'delivered':
       case 'completed':
         return const Color(0xFF16A34A);
       default:
@@ -272,8 +278,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
         return const Color(0xFFFEF3C7);
       case 'assigned':
         return const Color(0xFFDBEAFE);
+      case 'on_the_way':
       case 'delivering':
         return const Color(0xFFFFEDD5);
+      case 'delivered':
       case 'completed':
         return const Color(0xFFDCFCE7);
       default:

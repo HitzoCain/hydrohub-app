@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'address_screen.dart';
+import 'customer_nav_controller.dart';
 import 'track_order_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
 
 class OrderScreen extends StatefulWidget {
   const OrderScreen({super.key});
@@ -15,10 +16,6 @@ class OrderScreen extends StatefulWidget {
 class _OrderScreenState extends State<OrderScreen> {
   static const Color _primaryBlue = Color(0xFF2563EB);
   static const Color _background = Color(0xFFF1F5F9);
-  static const List<_SavedAddress> _fallbackAddresses = [
-    _SavedAddress(key: 'home', address: 'Home'),
-    _SavedAddress(key: 'office', address: 'Office'),
-  ];
 
   bool _isSubmitting = false;
   bool _isFetchingLocationPreview = false;
@@ -26,13 +23,12 @@ class _OrderScreenState extends State<OrderScreen> {
   int _totalGallons = 1;
   int _exchangeCount = 0;
   int _newContainerCount = 1;
+  int _basePrice = 350;
+  int _priceWithExchange = 250;
   double? _currentLat;
   double? _currentLng;
-  List<_SavedAddress> _savedAddresses = _fallbackAddresses;
-  String _selectedAddressKey = 'home';
-  String _deliveryAddress = 'Home';
-  double? _selectedLat;
-  double? _selectedLng;
+  List<_SavedAddress> _savedAddresses = const [];
+  _SavedAddress? _selectedAddress;
   String _deliveryTime = 'Morning';
   String _deliveryType = 'now';
   DateTime? _selectedDate;
@@ -42,11 +38,26 @@ class _OrderScreenState extends State<OrderScreen> {
   void initState() {
     super.initState();
     _refreshCurrentLocationPreview();
-    _loadSavedAddresses();
+    loadAddresses();
+    CustomerNavController.instance.addListener(_handleTabChange);
+    _loadPricingSettings();
   }
 
-  Future<void> _loadSavedAddresses() async {
-    if (_isLoadingAddresses) return;
+  @override
+  void dispose() {
+    CustomerNavController.instance.removeListener(_handleTabChange);
+    super.dispose();
+  }
+
+  void _handleTabChange() {
+    if (!mounted) return;
+    if (CustomerNavController.instance.index == 1) {
+      loadAddresses(force: true);
+    }
+  }
+
+  Future<void> loadAddresses({bool force = false}) async {
+    if (_isLoadingAddresses && !force) return;
 
     setState(() {
       _isLoadingAddresses = true;
@@ -55,30 +66,32 @@ class _OrderScreenState extends State<OrderScreen> {
     try {
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) {
+        if (!mounted) return;
+        setState(() {
+          _savedAddresses = const [];
+          _selectedAddress = null;
+        });
         return;
       }
 
       final addresses = await Supabase.instance.client
           .from('user_addresses')
-          .select()
+          .select('id,label,latitude,longitude,address')
           .eq('user_id', user.id);
 
       final addressList = List<Map<String, dynamic>>.from(addresses)
           .map((row) {
-            final value =
-                row['address'] ??
-                row['full_address'] ??
-                row['label'] ??
-                row['name'];
-            final address = value?.toString().trim() ?? '';
-            if (address.isEmpty) return null;
+            final id = row['id']?.toString().trim();
+            final address = row['address']?.toString().trim() ?? '';
+            final label = row['label']?.toString().trim() ?? '';
+            final lat = _toDouble(row['latitude']);
+            final lng = _toDouble(row['longitude']);
 
-            final key = (row['id'] ?? address).toString();
-            final lat = _toDouble(row['latitude'] ?? row['lat']);
-            final lng = _toDouble(row['longitude'] ?? row['lng']);
+            if (id == null || id.isEmpty || address.isEmpty) return null;
 
             return _SavedAddress(
-              key: key,
+              id: id,
+              label: label,
               address: address,
               latitude: lat,
               longitude: lng,
@@ -89,60 +102,32 @@ class _OrderScreenState extends State<OrderScreen> {
 
       if (!mounted) return;
 
-      if (addressList.isEmpty) {
-        // Prepend customer profile address if available
-        if (CustomerSession.address != null &&
-            CustomerSession.address!.isNotEmpty) {
-          addressList.add(
-            _SavedAddress(
-              key: 'profile_address',
-              address: CustomerSession.address!.trim(),
-            ),
-          );
-        }
-
-        setState(() {
-          _savedAddresses = _fallbackAddresses;
-          _selectedAddressKey = _savedAddresses.first.key;
-          _deliveryAddress = _savedAddresses.first.address;
-          _selectedLat = _savedAddresses.first.latitude;
-          _selectedLng = _savedAddresses.first.longitude;
-        });
-        return;
-      }
-
       setState(() {
-        // Prepend customer profile address if available
-        if (CustomerSession.address != null &&
-            CustomerSession.address!.isNotEmpty) {
-          addressList.insert(
-            0,
-            _SavedAddress(
-              key: 'profile_address',
-              address: CustomerSession.address!.trim(),
-            ),
-          );
+        _savedAddresses = addressList;
+
+        final selectedAddressId = _selectedAddress?.id;
+        if (_savedAddresses.isEmpty) {
+          _selectedAddress = null;
+          return;
         }
 
-        _savedAddresses = addressList;
-        final selected = _savedAddresses.firstWhere(
-          (address) => address.key == _selectedAddressKey,
-          orElse: () => _savedAddresses.first,
-        );
-        _selectedAddressKey = selected.key;
-        _deliveryAddress = selected.address;
-        _selectedLat = selected.latitude;
-        _selectedLng = selected.longitude;
+        if (selectedAddressId != null && selectedAddressId.isNotEmpty) {
+          for (final address in _savedAddresses) {
+            if (address.id == selectedAddressId) {
+              _selectedAddress = address;
+              return;
+            }
+          }
+        }
+
+        _selectedAddress = _savedAddresses.first;
       });
     } catch (e) {
       debugPrint('Failed to load saved addresses: $e');
       if (!mounted) return;
       setState(() {
-        _savedAddresses = _fallbackAddresses;
-        _selectedAddressKey = _savedAddresses.first.key;
-        _deliveryAddress = _savedAddresses.first.address;
-        _selectedLat = _savedAddresses.first.latitude;
-        _selectedLng = _savedAddresses.first.longitude;
+        _savedAddresses = const [];
+        _selectedAddress = null;
       });
     } finally {
       if (mounted) {
@@ -153,6 +138,18 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  Future<void> _openDeliveryAddressScreen() async {
+    Navigator.push<bool>(
+      context,
+      MaterialPageRoute<bool>(
+        builder: (_) => const AddressScreen(popOnAddressChange: true),
+      ),
+    ).then((_) {
+      if (!mounted) return;
+      loadAddresses(force: true);
+    });
+  }
+
   double? _toDouble(dynamic value) {
     if (value is double) return value;
     if (value is int) return value.toDouble();
@@ -161,8 +158,42 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   int get _estimatedPrice =>
-      (_exchangeCount * 250) + (_newContainerCount * 350);
+      (_exchangeCount * _priceWithExchange) + (_newContainerCount * _basePrice);
 
+  int _toInt(dynamic value, {required int fallback}) {
+    if (value is int) return value;
+    if (value is double) return value.round();
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
+  Future<void> _loadPricingSettings() async {
+    try {
+      final settings = await Supabase.instance.client
+          .from('system_settings')
+          .select('base_price,price_with_exchange')
+          .limit(1)
+          .maybeSingle();
+
+      if (settings == null || !mounted) {
+        return;
+      }
+
+      final basePrice = _toInt(settings['base_price'], fallback: _basePrice);
+      final withExchangePrice = _toInt(
+        settings['price_with_exchange'],
+        fallback: _priceWithExchange,
+      );
+
+      setState(() {
+        _basePrice = basePrice;
+        _priceWithExchange = withExchangePrice;
+      });
+    } catch (e) {
+      debugPrint('Failed to load pricing settings: $e');
+    }
+  }
   void _decreaseTotalGallons() {
     if (_totalGallons <= 1) return;
     setState(() {
@@ -269,6 +300,26 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _submitOrder() async {
     if (_isSubmitting) return;
 
+    if (_savedAddresses.isEmpty || _selectedAddress == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No saved address found. Please add one first.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
+    if (_selectedAddress!.latitude == null || _selectedAddress!.longitude == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selected address is missing coordinates.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
     if (_deliveryType == 'scheduled') {
       if (_selectedDate == null || _selectedTime == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -303,7 +354,7 @@ class _OrderScreenState extends State<OrderScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
                 SizedBox(width: 12),
-                Expanded(child: Text('Getting your location...')),
+                Expanded(child: Text('Placing your order...')),
               ],
             ),
           );
@@ -311,16 +362,8 @@ class _OrderScreenState extends State<OrderScreen> {
       );
       isLoadingShown = true;
 
-      // Use selected saved address coordinates first.
-      double? lat = _selectedLat;
-      double? lng = _selectedLng;
-
-      // Fallback to live GPS if saved address has no coordinates.
-      if (lat == null || lng == null) {
-        final position = await _getCurrentLocation();
-        lat = position.latitude;
-        lng = position.longitude;
-      }
+      final lat = _selectedAddress!.latitude!;
+      final lng = _selectedAddress!.longitude!;
 
       if (mounted) {
         setState(() {
@@ -360,7 +403,8 @@ class _OrderScreenState extends State<OrderScreen> {
                     true
                 ? (user.userMetadata?['full_name'] as String).trim()
                 : 'Customer',
-            'address': _deliveryAddress,
+            'address': _selectedAddress!.address,
+            'address_id': _selectedAddress!.id,
             'customer_lat': lat,
             'customer_lng': lng,
             // Keep existing columns in sync for compatibility in map views.
@@ -546,7 +590,7 @@ class _OrderScreenState extends State<OrderScreen> {
                         const SizedBox(height: 14),
                         _CounterGroupCard(
                           title: 'With Exchange',
-                          priceBadge: '₱250 each',
+                          priceBadge: '₱$_priceWithExchange each',
                           badgeColor: const Color(0xFF1D4ED8),
                           badgeBg: const Color(0xFFDBEAFE),
                           value: _exchangeCount,
@@ -556,7 +600,7 @@ class _OrderScreenState extends State<OrderScreen> {
                         const SizedBox(height: 10),
                         _CounterGroupCard(
                           title: 'New Containers',
-                          priceBadge: '₱350 each',
+                          priceBadge: '₱$_basePrice each',
                           badgeColor: const Color(0xFFB45309),
                           badgeBg: const Color(0xFFFEF3C7),
                           value: _newContainerCount,
@@ -573,34 +617,9 @@ class _OrderScreenState extends State<OrderScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        DropdownButtonFormField<String>(
-                          initialValue: _selectedAddressKey,
-                          decoration: _fieldDecoration(),
-                          items: _savedAddresses
-                              .map(
-                                (address) => DropdownMenuItem(
-                                  value: address.key,
-                                  child: Text(address.address),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (value) {
-                            if (value == null) return;
-                            final selected = _savedAddresses.firstWhere(
-                              (address) => address.key == value,
-                            );
-
-                            setState(() {
-                              _selectedAddressKey = selected.key;
-                              _deliveryAddress = selected.address;
-                              _selectedLat = selected.latitude;
-                              _selectedLng = selected.longitude;
-                            });
-                          },
-                        ),
                         if (_isLoadingAddresses)
                           const Padding(
-                            padding: EdgeInsets.only(top: 8),
+                            padding: EdgeInsets.only(bottom: 8),
                             child: Text(
                               'Loading saved addresses...',
                               style: TextStyle(
@@ -609,19 +628,151 @@ class _OrderScreenState extends State<OrderScreen> {
                               ),
                             ),
                           ),
-                        const SizedBox(height: 10),
-                        if (_selectedLat != null && _selectedLng != null)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Text(
-                              'Selected address location: ${_selectedLat!.toStringAsFixed(5)}, ${_selectedLng!.toStringAsFixed(5)}',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF1D4ED8),
-                                fontWeight: FontWeight.w600,
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: _openDeliveryAddressScreen,
+                            icon: const Icon(Icons.edit_location_alt_outlined),
+                            label: const Text('Manage addresses'),
+                          ),
+                        ),
+                        if (_savedAddresses.isEmpty)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFFE2E8F0),
+                                width: 0.5,
                               ),
                             ),
+                            child: const Text(
+                              'No address available',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                          )
+                        else ...[
+                          // Dropdown for address selection
+                          DropdownButtonFormField<String>(
+                            value: _selectedAddress?.id,
+                            decoration: InputDecoration(
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(
+                                  color: Color(0xFFE2E8F0),
+                                  width: 0.5,
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(
+                                  color: Color(0xFFE2E8F0),
+                                  width: 0.5,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(
+                                  color: Color(0xFF2563EB),
+                                  width: 1.2,
+                                ),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              hintText: 'Select an address',
+                              hintStyle: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF94A3B8),
+                              ),
+                            ),
+                            isExpanded: true,
+                            items: _savedAddresses.map((address) {
+                              return DropdownMenuItem<String>(
+                                value: address.id,
+                                child: Text(
+                                  address.label.isNotEmpty
+                                      ? address.label
+                                      : address.address,
+                                  style: const TextStyle(fontSize: 13),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (String? addressId) {
+                              if (addressId != null) {
+                                setState(() {
+                                  _selectedAddress =
+                                      _savedAddresses.firstWhere(
+                                    (addr) => addr.id == addressId,
+                                    orElse: () => _savedAddresses.first,
+                                  );
+                                });
+                              }
+                            },
                           ),
+                          // Selected address preview
+                          if (_selectedAddress != null) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEFF6FF),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: const Color(0xFFDBEAFE),
+                                  width: 0.5,
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _selectedAddress!.label.isNotEmpty
+                                        ? _selectedAddress!.label
+                                        : 'Saved Address',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF0F172A),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _selectedAddress!.address,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF64748B),
+                                    ),
+                                  ),
+                                  if (_selectedAddress!.latitude != null &&
+                                      _selectedAddress!.longitude != null) ...[
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Lat: ${_selectedAddress!.latitude!.toStringAsFixed(5)}, Lng: ${_selectedAddress!.longitude!.toStringAsFixed(5)}',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF1D4ED8),
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                        const SizedBox(height: 12),
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(10),
@@ -1027,21 +1178,6 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  InputDecoration _fieldDecoration() {
-    return InputDecoration(
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0), width: 0.5),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: _primaryBlue, width: 1.4),
-      ),
-    );
-  }
 }
 
 class _SectionCard extends StatelessWidget {
@@ -1322,14 +1458,23 @@ class _DeliveryTypeOption extends StatelessWidget {
 
 class _SavedAddress {
   const _SavedAddress({
-    required this.key,
+    required this.id,
+    required this.label,
     required this.address,
     this.latitude,
     this.longitude,
   });
 
-  final String key;
+  final String id;
+  final String label;
   final String address;
   final double? latitude;
   final double? longitude;
+
+  String get displayText {
+    if (label.trim().isNotEmpty && address.trim().isNotEmpty) {
+      return '$label - $address';
+    }
+    return label.trim().isNotEmpty ? label : address;
+  }
 }

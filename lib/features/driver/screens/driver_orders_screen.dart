@@ -32,18 +32,40 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
     _completedOrdersFuture = _fetchCompletedOrders();
   }
 
-  Future<List<_DeliveryItemData>> _fetchActiveOrders() async {
-    final driverId = await DriverSession.getDriverId();
+  Future<List<String>> _currentDriverIds() async {
+    final ids = <String>{};
 
-    if (driverId == null || driverId.trim().isEmpty) {
+    final sessionId = await DriverSession.getDriverId();
+    if (sessionId != null && sessionId.trim().isNotEmpty) {
+      ids.add(sessionId.trim());
+    }
+
+    final authUserId = Supabase.instance.client.auth.currentUser?.id;
+    if (authUserId != null && authUserId.trim().isNotEmpty) {
+      ids.add(authUserId.trim());
+    }
+
+    return ids.toList(growable: false);
+  }
+
+  Future<List<_DeliveryItemData>> _fetchActiveOrders() async {
+    final driverIds = await _currentDriverIds();
+
+    if (driverIds.isEmpty) {
       return [];
     }
 
-    final orders = await Supabase.instance.client
-        .from('orders')
-        .select()
-        .eq('driver_id', driverId)
-        .inFilter('status', ['assigned', 'on_the_way']);
+    final orders = driverIds.length == 1
+      ? await Supabase.instance.client
+          .from('orders')
+          .select()
+          .eq('driver_id', driverIds.first)
+          .inFilter('status', ['assigned', 'in_progress', 'on_the_way'])
+      : await Supabase.instance.client
+          .from('orders')
+          .select()
+          .inFilter('driver_id', driverIds)
+          .inFilter('status', ['assigned', 'in_progress', 'on_the_way']);
 
     return orders
         .whereType<Map<String, dynamic>>()
@@ -52,18 +74,25 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
   }
 
   Future<List<_DeliveryItemData>> _fetchCompletedOrders() async {
-    final driverId = await DriverSession.getDriverId();
+    final driverIds = await _currentDriverIds();
 
-    if (driverId == null || driverId.trim().isEmpty) {
+    if (driverIds.isEmpty) {
       return [];
     }
 
-    final orders = await Supabase.instance.client
-        .from('orders')
-        .select()
-        .eq('driver_id', driverId)
-        .eq('status', 'delivered')
-        .order('created_at', ascending: false);
+    final orders = driverIds.length == 1
+      ? await Supabase.instance.client
+          .from('orders')
+          .select()
+          .eq('driver_id', driverIds.first)
+          .inFilter('status', ['delivered', 'completed'])
+          .order('created_at', ascending: false)
+      : await Supabase.instance.client
+          .from('orders')
+          .select()
+          .inFilter('driver_id', driverIds)
+          .inFilter('status', ['delivered', 'completed'])
+          .order('created_at', ascending: false);
 
     return orders
         .whereType<Map<String, dynamic>>()
@@ -97,6 +126,29 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
       return text;
     }
 
+    double? toDouble(dynamic value) {
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
+    String displayAddressOf(Map<String, dynamic> row) {
+      final addressText = row['address_text']?.toString().trim();
+      if (addressText != null && addressText.isNotEmpty) {
+        return addressText;
+      }
+
+      final lat = toDouble(row['latitude']);
+      final lng = toDouble(row['longitude']);
+      if (lat != null && lng != null) {
+        return 'Lat: ${lat.toStringAsFixed(6)}, Lng: ${lng.toStringAsFixed(6)}';
+      }
+
+      return textOf(row['address'], fallback: 'No address provided');
+    }
+
     int gallonsOf(dynamic value) {
       if (value is int) return value;
       if (value is num) return value.toInt();
@@ -105,15 +157,26 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
 
     final orderId = textOf(order['id'], fallback: 'Unknown');
     final customerName = textOf(order['customer_name'], fallback: 'Customer');
-    final address = textOf(order['address'], fallback: 'No address provided');
+    final address = displayAddressOf(order);
     final gallons = gallonsOf(order['gallons']);
+    final rawStatus = textOf(
+      order['status'],
+      fallback: 'assigned',
+    ).toLowerCase();
+    final status =
+      rawStatus == 'in_progress'
+        ? 'on_the_way'
+        : (rawStatus == 'on_the_way' || rawStatus == 'delivered'
+        ? rawStatus
+      : 'assigned');
 
     return _DeliveryItemData(
       orderId: 'Order #$orderId',
       customerName: customerName,
       address: address,
       gallons: gallons,
-      status: _DeliveryStatus.delivering,
+      status: status,
+      rawOrder: Map<String, dynamic>.from(order),
     );
   }
 
@@ -126,6 +189,29 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
       return text;
     }
 
+    double? toDouble(dynamic value) {
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
+    String displayAddressOf(Map<String, dynamic> row) {
+      final addressText = row['address_text']?.toString().trim();
+      if (addressText != null && addressText.isNotEmpty) {
+        return addressText;
+      }
+
+      final lat = toDouble(row['latitude']);
+      final lng = toDouble(row['longitude']);
+      if (lat != null && lng != null) {
+        return 'Lat: ${lat.toStringAsFixed(6)}, Lng: ${lng.toStringAsFixed(6)}';
+      }
+
+      return textOf(row['address'], fallback: 'No address provided');
+    }
+
     int gallonsOf(dynamic value) {
       if (value is int) return value;
       if (value is num) return value.toInt();
@@ -134,7 +220,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
 
     final orderId = textOf(order['id'], fallback: 'Unknown');
     final customerName = textOf(order['customer_name'], fallback: 'Customer');
-    final address = textOf(order['address'], fallback: 'No address provided');
+    final address = displayAddressOf(order);
     final gallons = gallonsOf(order['gallons']);
     final deliveredDate = _formatDate(
       order['delivered_at'] ?? order['updated_at'] ?? order['created_at'],
@@ -145,8 +231,9 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
       customerName: customerName,
       address: address,
       gallons: gallons,
-      status: _DeliveryStatus.completed,
+      status: 'delivered',
       deliveredDate: deliveredDate,
+      rawOrder: Map<String, dynamic>.from(order),
     );
   }
 
@@ -415,12 +502,11 @@ class _ActiveOrdersList extends StatelessWidget {
                         builder: (_) => DriverOrderDetailsScreen(
                           customerName: delivery.customerName,
                           orderId: delivery.orderId,
-                          status: delivery.status.label,
+                          status: delivery.status,
                           contactNumber: '+63 912 345 6789',
                           address: delivery.address,
                           totalGallons: delivery.gallons,
-                          exchangeContainers: 3,
-                          newContainers: 2,
+                          initialOrder: delivery.rawOrder,
                           onOrderCompleted: onOrderCompleted,
                         ),
                       ),
@@ -626,7 +712,7 @@ class _DeliveryCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  delivery.status.label,
+                  _statusLabel(delivery.status),
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -695,6 +781,7 @@ class _DeliveryItemData {
     required this.address,
     required this.gallons,
     required this.status,
+    this.rawOrder,
     this.deliveredDate,
   });
 
@@ -702,7 +789,8 @@ class _DeliveryItemData {
   final String customerName;
   final String address;
   final int gallons;
-  final _DeliveryStatus status;
+  final String status;
+  final Map<String, dynamic>? rawOrder;
   final String? deliveredDate;
 }
 
@@ -713,25 +801,40 @@ class _StatusTheme {
   final Color background;
 }
 
-enum _DeliveryStatus {
-  delivering('Delivering'),
-  completed('Completed');
-
-  const _DeliveryStatus(this.label);
-  final String label;
+String _statusLabel(String status) {
+  switch (status) {
+    case 'assigned':
+      return 'Assigned';
+    case 'on_the_way':
+      return 'On the way';
+    case 'delivered':
+      return 'Delivered';
+    default:
+      return status;
+  }
 }
 
-_StatusTheme _statusTheme(_DeliveryStatus status) {
+_StatusTheme _statusTheme(String status) {
   switch (status) {
-    case _DeliveryStatus.delivering:
+    case 'assigned':
+      return const _StatusTheme(
+        foreground: Color(0xFFB45309),
+        background: Color(0xFFFEF3C7),
+      );
+    case 'on_the_way':
       return const _StatusTheme(
         foreground: Color(0xFF1D4ED8),
         background: Color(0xFFDBEAFE),
       );
-    case _DeliveryStatus.completed:
+    case 'delivered':
       return const _StatusTheme(
         foreground: Color(0xFF15803D),
         background: Color(0xFFDCFCE7),
+      );
+    default:
+      return const _StatusTheme(
+        foreground: Color(0xFF475569),
+        background: Color(0xFFE2E8F0),
       );
   }
 }

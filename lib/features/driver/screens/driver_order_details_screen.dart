@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 
 import 'driver_dashboard_screen.dart';
@@ -19,8 +22,9 @@ class DriverOrderDetailsScreen extends StatefulWidget {
     this.status = 'Pending',
     this.contactNumber = '+63 912 345 6789',
     this.totalGallons = 5,
-    this.exchangeContainers = 3,
-    this.newContainers = 2,
+    this.exchangeContainers = 0,
+    this.newContainers = 0,
+    this.initialOrder,
     this.onOrderCompleted,
   });
 
@@ -32,6 +36,7 @@ class DriverOrderDetailsScreen extends StatefulWidget {
   final int totalGallons;
   final int exchangeContainers;
   final int newContainers;
+  final Map<String, dynamic>? initialOrder;
   final VoidCallback? onOrderCompleted;
 
   @override
@@ -43,13 +48,349 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   static const Color _background = Color(0xFFF6F8FB);
   static const Color _primaryBlue = Color(0xFF2563EB);
   static const Color _successGreen = Color(0xFF16A34A);
-  static const LatLng _customerLocation = LatLng(14.5995, 120.9842);
-  static const LatLng _driverLocation = LatLng(14.5920, 120.9785);
+  static const LatLng _fallbackCustomerLocation = LatLng(14.5995, 120.9842);
+  static const LatLng _fallbackDriverLocation = LatLng(14.5920, 120.9785);
 
   bool _isLoading = false;
+  bool _isLoadingOrder = false;
+  late String _currentStatus;
+  Map<String, dynamic>? _order;
+
+  @override
+  void initState() {
+    super.initState();
+    _order = widget.initialOrder == null
+        ? null
+        : Map<String, dynamic>.from(widget.initialOrder!);
+    _currentStatus = _normalizeStatus(
+      _textOf(_order?['status'], fallback: widget.status),
+    );
+    _loadOrderDetails();
+  }
+
+  String get _rawOrderId {
+    final idFromOrder = _textOf(_order?['id'], fallback: '');
+    if (idFromOrder.isNotEmpty) {
+      return idFromOrder;
+    }
+    return widget.orderId.replaceFirst('Order #', '').trim();
+  }
+
+  double? _toDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  int _toInt(dynamic value, {required int fallback}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
+  bool _isValidLatLng(double lat, double lng) {
+    if (lat < -90 || lat > 90) return false;
+    if (lng < -180 || lng > 180) return false;
+    // Treat (0,0) as invalid fallback data for this app.
+    if (lat == 0 && lng == 0) return false;
+    return true;
+  }
+
+  List<double?> _extractCustomerCoordinates(Map<String, dynamic> source) {
+    final lat = _toDouble(source['customer_lat']) ??
+        _toDouble(source['latitude']) ??
+        _toDouble(source['lat']) ??
+        _toDouble(source['address_lat']) ??
+        _toDouble(source['address_latitude']);
+    final lng = _toDouble(source['customer_lng']) ??
+        _toDouble(source['longitude']) ??
+        _toDouble(source['lng']) ??
+        _toDouble(source['address_lng']) ??
+        _toDouble(source['address_longitude']);
+    return [lat, lng];
+  }
+
+  Future<LatLng?> _geocodeAddress(String address) async {
+    final trimmed = address.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+
+    try {
+      final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+        'q': trimmed,
+        'format': 'json',
+        'limit': '1',
+      });
+
+      final response = await http.get(
+        uri,
+        headers: const {
+          'User-Agent': 'HydroHub App (support@hydrohub.local)',
+          'Accept': 'application/json',
+        },
+      );
+
+      if (response.statusCode != 200) {
+        return null;
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List || decoded.isEmpty) {
+        return null;
+      }
+
+      final first = decoded.first;
+      if (first is! Map<String, dynamic>) {
+        return null;
+      }
+
+      final lat = _toDouble(first['lat']);
+      final lng = _toDouble(first['lon']);
+      if (lat == null || lng == null || !_isValidLatLng(lat, lng)) {
+        return null;
+      }
+
+      return LatLng(lat, lng);
+    } catch (e) {
+      debugPrint('Address geocoding failed: $e');
+      return null;
+    }
+  }
+
+  String _textOf(dynamic value, {required String fallback}) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) {
+      return fallback;
+    }
+    return text;
+  }
+
+  Future<void> _loadOrderDetails() async {
+    if (_rawOrderId.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingOrder = true;
+    });
+
+    try {
+      final response = await Supabase.instance.client
+          .from('orders')
+          .select()
+          .eq('id', _rawOrderId)
+          .maybeSingle();
+
+      if (!mounted || response == null) {
+        return;
+      }
+
+      final orderData = Map<String, dynamic>.from(response);
+      final extractedCoords = _extractCustomerCoordinates(orderData);
+      final extractedLat = extractedCoords[0];
+      final extractedLng = extractedCoords[1];
+
+      final addressText = _textOf(orderData['address_text'], fallback: '');
+      final addressValue = _textOf(orderData['address'], fallback: '');
+      final hasAddressText = addressText.isNotEmpty || addressValue.isNotEmpty;
+
+      if (extractedLat == null ||
+          extractedLng == null ||
+          !_isValidLatLng(extractedLat, extractedLng) ||
+          !hasAddressText) {
+        final addressId = _textOf(orderData['address_id'], fallback: '');
+        if (addressId.isNotEmpty) {
+          try {
+            final addressResponse = await Supabase.instance.client
+                .from('user_addresses')
+                .select()
+                .eq('id', addressId)
+                .maybeSingle();
+
+            if (addressResponse != null) {
+              final addressData = Map<String, dynamic>.from(addressResponse);
+              final addrLat = _toDouble(addressData['latitude']) ??
+                  _toDouble(addressData['lat']);
+              final addrLng = _toDouble(addressData['longitude']) ??
+                  _toDouble(addressData['lng']);
+
+              if (addrLat != null &&
+                  addrLng != null &&
+                  _isValidLatLng(addrLat, addrLng)) {
+                orderData['customer_lat'] = addrLat;
+                orderData['customer_lng'] = addrLng;
+                orderData['latitude'] = addrLat;
+                orderData['longitude'] = addrLng;
+              }
+
+              if (!hasAddressText) {
+                final addressFromAddressBook = _textOf(
+                  addressData['address_text'],
+                  fallback: '',
+                );
+                final plainAddressFromAddressBook = _textOf(
+                  addressData['address'],
+                  fallback: '',
+                );
+
+                if (addressFromAddressBook.isNotEmpty) {
+                  orderData['address_text'] = addressFromAddressBook;
+                } else if (plainAddressFromAddressBook.isNotEmpty) {
+                  orderData['address'] = plainAddressFromAddressBook;
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint('Address lookup fallback failed: $e');
+          }
+        }
+      }
+
+      final updatedCoords = _extractCustomerCoordinates(orderData);
+      final updatedLat = updatedCoords[0];
+      final updatedLng = updatedCoords[1];
+      final hasValidCoordinates =
+          updatedLat != null &&
+          updatedLng != null &&
+          _isValidLatLng(updatedLat, updatedLng);
+
+      if (!hasValidCoordinates) {
+        final geocodeAddress = _textOf(
+          orderData['address_text'],
+          fallback: _textOf(orderData['address'], fallback: widget.address),
+        );
+
+        final geocoded = await _geocodeAddress(geocodeAddress);
+        if (geocoded != null) {
+          orderData['customer_lat'] = geocoded.latitude;
+          orderData['customer_lng'] = geocoded.longitude;
+          orderData['latitude'] = geocoded.latitude;
+          orderData['longitude'] = geocoded.longitude;
+        }
+      }
+
+      setState(() {
+        _order = orderData;
+        _currentStatus = _normalizeStatus(
+          _textOf(_order?['status'], fallback: _currentStatus),
+        );
+      });
+    } catch (e) {
+      debugPrint('Failed to load order details: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingOrder = false;
+        });
+      }
+    }
+  }
+
+  String _resolvedCustomerName() {
+    return _textOf(
+      _order?['customer_name'],
+      fallback: widget.customerName,
+    );
+  }
+
+  String _resolvedContactNumber() {
+    final fromOrder = _textOf(_order?['customer_phone'], fallback: '');
+    if (fromOrder.isNotEmpty) {
+      return fromOrder;
+    }
+    return _textOf(widget.contactNumber, fallback: 'Not provided');
+  }
+
+  String _resolvedAddress() {
+    final addressText = _textOf(_order?['address_text'], fallback: '');
+    if (addressText.isNotEmpty) {
+      return addressText;
+    }
+    return _textOf(_order?['address'], fallback: widget.address);
+  }
+
+  int _resolvedTotalGallons() {
+    return _toInt(_order?['gallons'], fallback: widget.totalGallons);
+  }
+
+  int _resolvedExchangeContainers() {
+    final total = _resolvedTotalGallons();
+    final hasExchangeRaw = _order?['with_exchange'];
+    if (hasExchangeRaw is bool && !hasExchangeRaw) {
+      return 0;
+    }
+
+    final explicitExchange = _order?['exchange_containers'];
+    if (explicitExchange == null) {
+      return 0;
+    }
+
+    final exchange = _toInt(
+      explicitExchange,
+      fallback: 0,
+    );
+    if (exchange < 0) return 0;
+    if (exchange > total) return total;
+    return exchange;
+  }
+
+  int _resolvedNewContainers() {
+    final total = _resolvedTotalGallons();
+    final explicit = _order?['new_containers'];
+    if (explicit != null) {
+      final parsed = _toInt(explicit, fallback: total);
+      if (parsed < 0) return 0;
+      return parsed;
+    }
+
+    final hasExchangeRaw = _order?['with_exchange'];
+    if (hasExchangeRaw is bool && !hasExchangeRaw) {
+      return total;
+    }
+
+    final inferred = total - _resolvedExchangeContainers();
+    return inferred < 0 ? 0 : inferred;
+  }
+
+  LatLng _resolvedCustomerLocation() {
+    final source = _order ?? const <String, dynamic>{};
+    final extractedCoords = _extractCustomerCoordinates(source);
+    final lat = extractedCoords[0];
+    final lng = extractedCoords[1];
+    if (lat == null || lng == null || !_isValidLatLng(lat, lng)) {
+      return _fallbackCustomerLocation;
+    }
+    return LatLng(lat, lng);
+  }
+
+  LatLng _resolvedDriverLocation() {
+    final lat = _toDouble(_order?['driver_lat']);
+    final lng = _toDouble(_order?['driver_lng']);
+    if (lat == null || lng == null) {
+      return _fallbackDriverLocation;
+    }
+    return LatLng(lat, lng);
+  }
+
+  bool _hasRealDriverLocation() {
+    final lat = _toDouble(_order?['driver_lat']);
+    final lng = _toDouble(_order?['driver_lng']);
+    if (lat == null || lng == null) {
+      return false;
+    }
+    return _isValidLatLng(lat, lng);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final customerLocation = _resolvedCustomerLocation();
+    final driverLocation = _resolvedDriverLocation();
+    final hasDriverLocation = _hasRealDriverLocation();
+
     return Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
@@ -87,8 +428,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                     const SizedBox(height: 8),
                     _InfoRow(
                       label: 'Status',
-                      value: widget.status,
-                      valueColor: _statusColor(widget.status),
+                      value: _statusLabel(_currentStatus),
+                      valueColor: _statusColor(_currentStatus),
                     ),
                   ],
                 ),
@@ -109,15 +450,15 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                     const SizedBox(height: 12),
                     _InfoRow(
                       label: 'Customer Name',
-                      value: widget.customerName,
+                      value: _resolvedCustomerName(),
                     ),
                     const SizedBox(height: 8),
                     _InfoRow(
                       label: 'Contact Number',
-                      value: widget.contactNumber,
+                      value: _resolvedContactNumber(),
                     ),
                     const SizedBox(height: 8),
-                    _InfoRow(label: 'Delivery Address', value: widget.address),
+                    _InfoRow(label: 'Delivery Address', value: _resolvedAddress()),
                   ],
                 ),
               ),
@@ -137,17 +478,17 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                     const SizedBox(height: 12),
                     _InfoRow(
                       label: 'Total Gallons',
-                      value: '${widget.totalGallons} Gallons',
+                      value: '${_resolvedTotalGallons()} Gallons',
                     ),
                     const SizedBox(height: 8),
                     _InfoRow(
                       label: 'Exchange Containers',
-                      value: '${widget.exchangeContainers}',
+                      value: '${_resolvedExchangeContainers()}',
                     ),
                     const SizedBox(height: 8),
                     _InfoRow(
                       label: 'New Containers',
-                      value: '${widget.newContainers}',
+                      value: '${_resolvedNewContainers()}',
                     ),
                   ],
                 ),
@@ -166,13 +507,25 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    const Text(
-                      'Customer Location',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF475569),
-                      ),
+                    Row(
+                      children: [
+                        const Text(
+                          'Customer Location',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF475569),
+                          ),
+                        ),
+                        if (_isLoadingOrder) ...[
+                          const SizedBox(width: 8),
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 8),
                     ClipRRect(
@@ -181,8 +534,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                         height: 220,
                         width: double.infinity,
                         child: FlutterMap(
-                          options: const MapOptions(
-                            initialCenter: _customerLocation,
+                          options: MapOptions(
+                            initialCenter: customerLocation,
                             initialZoom: 15,
                           ),
                           children: [
@@ -194,7 +547,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                             MarkerLayer(
                               markers: [
                                 Marker(
-                                  point: _customerLocation,
+                                  point: customerLocation,
                                   width: 40,
                                   height: 40,
                                   child: const Icon(
@@ -203,16 +556,17 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                                     size: 40,
                                   ),
                                 ),
-                                Marker(
-                                  point: _driverLocation,
-                                  width: 40,
-                                  height: 40,
-                                  child: const Icon(
-                                    Icons.delivery_dining,
-                                    color: Color(0xFF2563EB),
-                                    size: 40,
+                                if (hasDriverLocation)
+                                  Marker(
+                                    point: driverLocation,
+                                    width: 40,
+                                    height: 40,
+                                    child: const Icon(
+                                      Icons.delivery_dining,
+                                      color: Color(0xFF2563EB),
+                                      size: 40,
+                                    ),
                                   ),
-                                ),
                               ],
                             ),
                           ],
@@ -244,69 +598,70 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: OutlinedButton(
-                        onPressed: () {},
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _primaryBlue,
-                          side: const BorderSide(color: Color(0xFFBFDBFE)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: const Text(
-                          'Start Delivery',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+              if (_currentStatus == 'assigned')
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: OutlinedButton(
+                    onPressed: _isLoading ? null : _handleStartDelivery,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _primaryBlue,
+                      side: const BorderSide(color: Color(0xFFBFDBFE)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: _isLoading ? null : _handleCompleteDelivery,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _successGreen,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text(
+                            'Start Delivery',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                          elevation: 0,
-                          disabledBackgroundColor: Colors.grey.shade400,
-                        ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white,
-                                  ),
-                                ),
-                              )
-                            : const Text(
-                                'Mark as Delivered',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                  ),
+                ),
+              if (_currentStatus == 'in_progress')
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _handleCompleteDelivery,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _successGreen,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                      disabledBackgroundColor: Colors.grey.shade400,
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
                               ),
-                      ),
-                    ),
+                            ),
+                          )
+                        : const Text(
+                            'Mark as Delivered',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                   ),
-                ],
-              ),
+                ),
             ],
           ),
         ),
@@ -383,11 +738,116 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   }
 
   Future<void> _handleCompleteDelivery() async {
-    final orderId = widget.orderId.replaceFirst('Order #', '');
-    await _completeOrder(orderId);
+    final orderId = _rawOrderId;
+    await _markDelivered(orderId);
   }
 
-  Future<void> _completeOrder(String orderId) async {
+  Future<void> _handleStartDelivery() async {
+    final orderId = _rawOrderId;
+    await _startDelivery(orderId);
+  }
+
+  Future<void> _startDelivery(String orderId) async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final supabase = Supabase.instance.client;
+      final session = await DriverSession.load();
+      final driverId = session?.id ?? DriverSession.id;
+
+      if (driverId == null || driverId.isEmpty) {
+        throw Exception('Driver ID not found');
+      }
+
+      final settings = await supabase
+          .from('system_settings')
+          .select('max_deliveries_per_driver')
+          .limit(1)
+          .maybeSingle();
+
+      int maxDeliveries = 3;
+      final maxRaw = settings?['max_deliveries_per_driver'];
+      if (maxRaw is int) {
+        maxDeliveries = maxRaw;
+      } else if (maxRaw is num) {
+        maxDeliveries = maxRaw.toInt();
+      } else if (maxRaw is String) {
+        maxDeliveries = int.tryParse(maxRaw) ?? maxDeliveries;
+      }
+      if (maxDeliveries < 1) {
+        maxDeliveries = 1;
+      }
+
+      final inProgressOrders = await supabase
+          .from('orders')
+          .select('id')
+          .eq('driver_id', driverId)
+          .inFilter('status', ['in_progress', 'on_the_way']);
+
+      if (inProgressOrders.length >= maxDeliveries) {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Cannot start new delivery. Max active deliveries reached ($maxDeliveries).',
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      // Update order status to 'in_progress'
+      await supabase
+          .from('orders')
+          .update({'status': 'in_progress'})
+          .eq('id', orderId);
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentStatus = 'in_progress';
+        _order = {
+          ...?_order,
+          'status': 'in_progress',
+        };
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Delivery started.'),
+          backgroundColor: Color(0xFF2563EB),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error starting delivery: $error'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  Future<void> _markDelivered(String orderId) async {
     if (!mounted) return;
 
     setState(() {
@@ -411,7 +871,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
           .update({'status': 'delivered'})
           .eq('id', orderId);
 
-    // Update driver status to 'active' (available)
+      // Update driver status to 'active' (available)
       await supabase
           .from('employees')
           .update({'status': 'active'})
@@ -419,14 +879,12 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
       if (!mounted) return;
 
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Order marked as delivered!'),
-          backgroundColor: Color(0xFF16A34A),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      setState(() {
+        _order = {
+          ...?_order,
+          'status': 'delivered',
+        };
+      });
 
       // Call the completion callback to refresh orders list
       widget.onOrderCompleted?.call();
@@ -452,14 +910,44 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
   static Color _statusColor(String value) {
     switch (value.toLowerCase()) {
-      case 'delivering':
+      case 'in_progress':
+      case 'on_the_way':
         return const Color(0xFF1D4ED8);
       case 'delivered':
         return const Color(0xFF15803D);
+      case 'assigned':
       case 'pending':
       default:
         return const Color(0xFFB45309);
     }
+  }
+
+  static String _statusLabel(String value) {
+    switch (value.toLowerCase()) {
+      case 'assigned':
+        return 'Assigned';
+      case 'in_progress':
+        return 'In progress';
+      case 'on_the_way':
+        return 'On the way';
+      case 'delivered':
+        return 'Delivered';
+      default:
+        return value;
+    }
+  }
+
+  static String _normalizeStatus(String value) {
+    final normalized = value.toLowerCase();
+    if (normalized == 'assigned' ||
+        normalized == 'in_progress' ||
+        normalized == 'on_the_way' ||
+        normalized == 'delivered') {
+      return normalized == 'on_the_way' ? 'in_progress' : normalized;
+    }
+    if (normalized == 'delivering') return 'in_progress';
+    if (normalized == 'pending') return 'assigned';
+    return 'assigned';
   }
 }
 

@@ -25,21 +25,21 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
       customerName: 'Juan Dela Cruz',
       orderId: 'Order #001',
       address: 'Blk 8 Lot 12, Quezon City',
-      status: DeliveryStatus.delivering,
+      status: DeliveryStatus.onTheWay,
       location: LatLng(14.6095, 120.9892),
     ),
     DeliveryLocationData(
       customerName: 'Maria Santos',
       orderId: 'Order #002',
       address: 'P. Burgos St, Makati City',
-      status: DeliveryStatus.pending,
+      status: DeliveryStatus.assigned,
       location: LatLng(14.5895, 120.9792),
     ),
     DeliveryLocationData(
       customerName: 'Pedro Reyes',
       orderId: 'Order #003',
       address: 'C. Raymundo Ave, Pasig City',
-      status: DeliveryStatus.delivering,
+      status: DeliveryStatus.onTheWay,
       location: LatLng(14.6032, 120.9968),
     ),
   ];
@@ -47,7 +47,11 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
   @override
   Widget build(BuildContext context) {
     final activeCount = _customers
-        .where((delivery) => delivery.status == DeliveryStatus.delivering)
+        .where(
+          (delivery) =>
+              delivery.status == DeliveryStatus.assigned ||
+              delivery.status == DeliveryStatus.onTheWay,
+        )
         .length;
 
     return Scaffold(
@@ -137,10 +141,7 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
           }
         },
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Dashboard',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Dashboard'),
           BottomNavigationBarItem(
             icon: Icon(Icons.receipt_long_outlined),
             label: 'Orders',
@@ -219,10 +220,7 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
                       color: const Color(0xFFEFF6FF),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(
-                      Icons.location_on,
-                      color: _primaryBlue,
-                    ),
+                    child: const Icon(Icons.location_on, color: _primaryBlue),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -272,7 +270,7 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
                           customerName: delivery.customerName,
                           orderId: delivery.orderId,
                           address: delivery.address,
-                          status: delivery.status.label,
+                          status: delivery.status.value,
                         ),
                       ),
                     );
@@ -339,11 +337,7 @@ class DeliveryMarker extends StatelessWidget {
             ),
           ),
         ),
-        Icon(
-          icon,
-          size: 34,
-          color: iconColor,
-        ),
+        Icon(icon, size: 34, color: iconColor),
       ],
     );
   }
@@ -400,10 +394,7 @@ class _TopInfoCard extends StatelessWidget {
 }
 
 class _InfoRow extends StatelessWidget {
-  const _InfoRow({
-    required this.label,
-    required this.value,
-  });
+  const _InfoRow({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -454,31 +445,29 @@ class DeliveryLocationData {
 }
 
 class _StatusTheme {
-  const _StatusTheme({
-    required this.foreground,
-    required this.background,
-  });
+  const _StatusTheme({required this.foreground, required this.background});
 
   final Color foreground;
   final Color background;
 }
 
 enum DeliveryStatus {
-  delivering('Delivering'),
-  pending('Pending');
+  assigned('assigned', 'Assigned'),
+  onTheWay('on_the_way', 'On the way');
 
-  const DeliveryStatus(this.label);
+  const DeliveryStatus(this.value, this.label);
+  final String value;
   final String label;
 }
 
 _StatusTheme _statusTheme(DeliveryStatus status) {
   switch (status) {
-    case DeliveryStatus.delivering:
+    case DeliveryStatus.onTheWay:
       return const _StatusTheme(
         foreground: Color(0xFF1D4ED8),
         background: Color(0xFFDBEAFE),
       );
-    case DeliveryStatus.pending:
+    case DeliveryStatus.assigned:
       return const _StatusTheme(
         foreground: Color(0xFFB45309),
         background: Color(0xFFFEF3C7),

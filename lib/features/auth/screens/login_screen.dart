@@ -4,8 +4,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/customer_signup_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_shell.dart';
 import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
+import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_shell.dart';
 import 'package:aqua_in_laba_app/features/driver/screens/driver_dashboard_screen.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 
@@ -19,6 +19,9 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const String _googleRedirectTo =
+  'io.supabase.flutter://login-callback';
+
   final _formKey = GlobalKey<FormState>();
 
   final _emailController = TextEditingController();
@@ -28,60 +31,90 @@ class _LoginScreenState extends State<LoginScreen> {
   UserRole _selectedRole = UserRole.customer;
   bool _isLoading = false;
   StreamSubscription<AuthState>? _authStateSubscription;
+  bool _isNavigatingAfterAuth = false;
 
   @override
   void initState() {
     super.initState();
-    _listenToAuthStateChanges();
+    _listenForAuthStateChanges();
+    _checkCustomerSessionOnStart();
     _restoreDriverSession();
   }
 
-  void _listenToAuthStateChanges() {
+  void _listenForAuthStateChanges() {
     _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange
         .listen((data) async {
           final session = data.session;
-
-          if (session == null) {
+          if (session == null || _isNavigatingAfterAuth || !mounted) {
             return;
           }
 
-          debugPrint('Logged in user: ${session.user.email}');
+          debugPrint('Logged in: ${session.user.email}');
+          _isNavigatingAfterAuth = true;
 
-          if (data.event != AuthChangeEvent.signedIn) {
-            return;
-          }
+          final user = session.user;
 
-          await createOrUpdateProfile(session.user);
-
-          // Load profile cache and navigate to customer area.
           try {
+            await DriverSession.clear();
+            await createOrUpdateProfile(user);
+
             final profile = await Supabase.instance.client
                 .from('customer_profiles')
                 .select()
-                .eq('user_id', session.user.id)
-                .maybeSingle();
+                .eq('user_id', user.id)
+                .single();
 
-            if (profile != null) {
-              await CustomerSession.save(
-                customerId: session.user.id,
-                customerName: (profile['name'] ?? '').toString(),
-                customerPhone: profile['phone']?.toString(),
-                customerAddress: profile['address']?.toString(),
-              );
-            }
+            await CustomerSession.save(
+              customerId: user.id,
+              customerName: profile['name'] ?? '',
+              customerPhone: profile['phone'],
+              customerAddress: profile['address'],
+            );
           } catch (e) {
-            debugPrint('Auth listener profile load error: $e');
+            debugPrint('Post Google-login session sync error: $e');
           }
 
           if (!mounted) {
             return;
           }
 
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const CustomerNavShell()),
-          );
+          Future.microtask(() {
+            if (!mounted) {
+              return;
+            }
+
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute<void>(
+                builder: (_) => const CustomerNavShell(),
+              ),
+              (route) => false,
+            );
+          });
         });
+  }
+
+  void _checkCustomerSessionOnStart() {
+    final session = Supabase.instance.client.auth.currentSession;
+    debugPrint('Current auth session on start: $session');
+
+    if (session == null || _isNavigatingAfterAuth || !mounted) {
+      return;
+    }
+
+    _isNavigatingAfterAuth = true;
+
+    Future.microtask(() {
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (_) => const CustomerNavShell(),
+        ),
+        (route) => false,
+      );
+    });
   }
 
   Future<void> createOrUpdateProfile(User user) async {
@@ -118,10 +151,25 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> signInWithGoogle() async {
+    if (_isLoading) {
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
       await Supabase.instance.client.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: 'io.supabase.flutter://login-callback',
+        redirectTo: _googleRedirectTo,
+        authScreenLaunchMode: LaunchMode.externalApplication,
+      );
+    } on AuthException catch (e) {
+      debugPrint('Google login auth error: ${e.message}');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Google login failed: ${e.message}')),
       );
     } catch (e) {
       debugPrint('Google login error: $e');
@@ -129,6 +177,12 @@ class _LoginScreenState extends State<LoginScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Google login error: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -198,6 +252,8 @@ class _LoginScreenState extends State<LoginScreen> {
         // Load customer profile
         if (user != null) {
           try {
+            await createOrUpdateProfile(user);
+
             final profile = await supabase
                 .from('customer_profiles')
                 .select()
@@ -220,14 +276,14 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
 
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Login successful')));
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute<void>(builder: (_) => const CustomerNavShell()),
+        // Navigate to dashboard (auth gate will also pick up the change)
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute<void>(
+            builder: (_) => const CustomerNavShell(),
+          ),
+          (route) => false,
         );
+
       } else {
         final inputCode = _secretCodeController.text.trim();
         final supabase = Supabase.instance.client;
