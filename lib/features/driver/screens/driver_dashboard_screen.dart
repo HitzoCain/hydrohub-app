@@ -335,60 +335,91 @@ class _TopBar extends StatelessWidget {
   final String? driverName;
   final Future<String> subtitleFuture;
 
+  String _salutation() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                RichText(
-                  text: TextSpan(
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF0A1628),
-                      letterSpacing: -0.5,
-                    ),
-                    children: [
-                      TextSpan(
-                        text:
-                            'Hello, ${(driverName == null || driverName!.trim().isEmpty) ? 'Driver' : driverName!.trim()} ',
-                      ),
-                      const TextSpan(text: '👋'),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 2),
-                FutureBuilder<String>(
-                  future: subtitleFuture,
-                  builder: (context, snapshot) {
-                    final subtitle =
-                        (snapshot.data == null || snapshot.data!.trim().isEmpty)
-                        ? DateFormat('EEEE').format(DateTime.now())
-                        : snapshot.data!;
+    final resolvedName = (driverName == null || driverName!.trim().isEmpty)
+        ? 'Driver'
+        : driverName!.trim();
 
-                    return Text(
-                      subtitle,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF7B8CA6),
-                      ),
-                    );
-                  },
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0B1220), Color(0xFF172033)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x220F172A),
+            blurRadius: 12,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB).withValues(alpha: 0.20),
+                  shape: BoxShape.circle,
                 ),
-              ],
+                child: const Icon(
+                  Icons.local_shipping_rounded,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const Spacer(),
+              const _NotificationBell(),
+              const SizedBox(width: 8),
+              const _Avatar(),
+            ],
+          ),
+          Text(
+            '${_salutation()}, $resolvedName 👋',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 21,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              height: 1.05,
             ),
           ),
-          const SizedBox(width: 14),
-          const _NotificationBell(),
-          const SizedBox(width: 10),
-          const _Avatar(),
+          const SizedBox(height: 4),
+          FutureBuilder<String>(
+            future: subtitleFuture,
+            builder: (context, snapshot) {
+              final subtitle =
+                  (snapshot.data == null || snapshot.data!.trim().isEmpty)
+                  ? DateFormat('EEEE').format(DateTime.now())
+                  : snapshot.data!;
+
+              return Text(
+                subtitle,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFFCBD5E1),
+                ),
+              );
+            },
+          ),
         ],
       ),
     );

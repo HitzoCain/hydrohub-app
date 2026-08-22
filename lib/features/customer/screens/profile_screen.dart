@@ -3,11 +3,119 @@ import 'package:aqua_in_laba_app/features/customer/screens/edit_profile_screen.d
 import 'package:aqua_in_laba_app/features/customer/screens/address_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/support_screen.dart';
 import 'package:aqua_in_laba_app/features/auth/services/logout_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
   static const Color _background = Color(0xFFF6F8FB);
+
+  late Future<_ProfileData> _profileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _profileFuture = _loadProfileData();
+  }
+
+  @override
+  void reassemble() {
+    super.reassemble();
+    // Hot reload can keep previously shaped objects in memory.
+    // Refresh future to avoid stale _ProfileData instances.
+    _refreshProfile();
+  }
+
+  Future<_ProfileData> _loadProfileData() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      return const _ProfileData(
+        name: 'Customer',
+        email: 'No email',
+        totalOrders: 0,
+        activeOrders: 0,
+      );
+    }
+
+    var name = (user.userMetadata?['full_name'] as String?)?.trim() ?? '';
+    final email = (user.email ?? '').trim().isNotEmpty
+        ? (user.email ?? '').trim()
+        : 'No email';
+
+    try {
+      final profile = await Supabase.instance.client
+          .from('customer_profiles')
+          .select('name')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      final profileName = profile?['name']?.toString().trim() ?? '';
+      if (profileName.isNotEmpty) {
+        name = profileName;
+      }
+    } catch (e) {
+      debugPrint('Failed to load customer profile name: $e');
+    }
+
+    if (name.isEmpty) {
+      name = 'Customer';
+    }
+
+    var totalOrders = 0;
+    var activeOrders = 0;
+
+    try {
+      final orderRows = await Supabase.instance.client
+          .from('orders')
+          .select('status')
+          .eq('customer_id', user.id);
+
+      final orders = List<Map<String, dynamic>>.from(orderRows);
+      final nonCancelled = orders.where((row) {
+        final status = (row['status']?.toString().trim().toLowerCase() ?? '')
+            .replaceAll(' ', '_');
+        return status != 'cancelled';
+      }).toList();
+
+      totalOrders = nonCancelled.length;
+
+      const activeStatuses = <String>{
+        'accepted',
+        'assigned',
+        'on_the_way',
+        'delivering',
+        'preparing',
+        'in_progress',
+      };
+
+      activeOrders = nonCancelled.where((row) {
+        final status = (row['status']?.toString().trim().toLowerCase() ?? '')
+            .replaceAll(' ', '_');
+        return activeStatuses.contains(status);
+      }).length;
+    } catch (e) {
+      debugPrint('Failed to load profile order stats: $e');
+    }
+
+    return _ProfileData(
+      name: name,
+      email: email,
+      totalOrders: totalOrders,
+      activeOrders: activeOrders,
+    );
+  }
+
+  void _refreshProfile() {
+    setState(() {
+      _profileFuture = _loadProfileData();
+    });
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -24,17 +132,33 @@ class ProfileScreen extends StatelessWidget {
         scrolledUnderElevation: 0,
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: const [
-            _ProfileHeader(),
-            SizedBox(height: 16),
-            _QuickInfoSection(),
-            SizedBox(height: 16),
-            _AccountOptionsSection(),
-            SizedBox(height: 20),
-            _LogoutButton(),
-          ],
+        child: FutureBuilder<_ProfileData>(
+          future: _profileFuture,
+          builder: (context, snapshot) {
+            final profile = snapshot.data ??
+                const _ProfileData(
+                  name: 'Customer',
+                  email: 'No email',
+                  totalOrders: 0,
+                  activeOrders: 0,
+                );
+
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                _ProfileHeader(name: profile.name, email: profile.email),
+                const SizedBox(height: 16),
+                _QuickInfoSection(
+                  totalOrders: profile.totalOrders,
+                  activeOrders: profile.activeOrders,
+                ),
+                const SizedBox(height: 16),
+                _AccountOptionsSection(onProfileUpdated: _refreshProfile),
+                const SizedBox(height: 20),
+                const _LogoutButton(),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -42,7 +166,10 @@ class ProfileScreen extends StatelessWidget {
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader();
+  const _ProfileHeader({required this.name, required this.email});
+
+  final String name;
+  final String email;
 
   @override
   Widget build(BuildContext context) {
@@ -67,8 +194,8 @@ class _ProfileHeader extends StatelessWidget {
             child: Icon(Icons.person, color: Color(0xFF2563EB), size: 42),
           ),
           const SizedBox(height: 12),
-          const Text(
-            'Juan Dela Cruz',
+          Text(
+            name,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w700,
@@ -76,8 +203,8 @@ class _ProfileHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'juan@email.com',
+          Text(
+            email,
             style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
           ),
         ],
@@ -87,16 +214,22 @@ class _ProfileHeader extends StatelessWidget {
 }
 
 class _QuickInfoSection extends StatelessWidget {
-  const _QuickInfoSection();
+  const _QuickInfoSection({
+    required this.totalOrders,
+    required this.activeOrders,
+  });
+
+  final int totalOrders;
+  final int activeOrders;
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      children: const [
+      children: [
         Expanded(
           child: _InfoCard(
             label: 'Total Orders',
-            value: '12',
+            value: '$totalOrders',
             icon: Icons.receipt_long,
           ),
         ),
@@ -104,7 +237,7 @@ class _QuickInfoSection extends StatelessWidget {
         Expanded(
           child: _InfoCard(
             label: 'Active Orders',
-            value: '1',
+            value: '$activeOrders',
             icon: Icons.local_shipping_outlined,
           ),
         ),
@@ -164,7 +297,9 @@ class _InfoCard extends StatelessWidget {
 }
 
 class _AccountOptionsSection extends StatelessWidget {
-  const _AccountOptionsSection();
+  const _AccountOptionsSection({required this.onProfileUpdated});
+
+  final VoidCallback onProfileUpdated;
 
   @override
   Widget build(BuildContext context) {
@@ -185,13 +320,14 @@ class _AccountOptionsSection extends StatelessWidget {
           _OptionTile(
             icon: Icons.edit_outlined,
             label: 'Edit Name',
-            onTap: () {
-              Navigator.push(
+            onTap: () async {
+              await Navigator.push(
                 context,
                 MaterialPageRoute<void>(
                   builder: (_) => const EditProfileScreen(),
                 ),
               );
+              onProfileUpdated();
             },
           ),
           const Divider(height: 1, color: Color(0xFFE2E8F0)),
@@ -224,6 +360,20 @@ class _AccountOptionsSection extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ProfileData {
+  const _ProfileData({
+    required this.name,
+    required this.email,
+    required this.totalOrders,
+    required this.activeOrders,
+  });
+
+  final String name;
+  final String email;
+  final int totalOrders;
+  final int activeOrders;
 }
 
 class _OptionTile extends StatelessWidget {

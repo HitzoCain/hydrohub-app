@@ -50,46 +50,23 @@ class _LoginScreenState extends State<LoginScreen> {
           }
 
           debugPrint('Logged in: ${session.user.email}');
-          _isNavigatingAfterAuth = true;
-
           final user = session.user;
 
-          try {
-            await DriverSession.clear();
-            await createOrUpdateProfile(user);
-
-            final profile = await Supabase.instance.client
-                .from('customer_profiles')
-                .select()
-                .eq('user_id', user.id)
-                .single();
-
-            await CustomerSession.save(
-              customerId: user.id,
-              customerName: profile['name'] ?? '',
-              customerPhone: profile['phone'],
-              customerAddress: profile['address'],
-            );
-          } catch (e) {
-            debugPrint('Post Google-login session sync error: $e');
-          }
-
-          if (!mounted) {
-            return;
-          }
-
-          Future.microtask(() {
+          if (user.emailConfirmedAt == null) {
+            await Supabase.instance.client.auth.signOut();
             if (!mounted) {
               return;
             }
 
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute<void>(
-                builder: (_) => const CustomerNavShell(),
-              ),
-              (route) => false,
-            );
-          });
+            _showEmailVerificationMessage(email: user.email ?? '');
+            return;
+          }
+
+          try {
+            await _handleVerifiedCustomerSession(user);
+          } catch (e) {
+            debugPrint('Post Google-login session sync error: $e');
+          }
         });
   }
 
@@ -101,23 +78,31 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    _isNavigatingAfterAuth = true;
-
-    Future.microtask(() {
+    final user = session.user;
+    if (user.emailConfirmedAt == null) {
+      Supabase.instance.client.auth.signOut();
       if (!mounted) {
         return;
       }
 
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(
-          builder: (_) => const CustomerNavShell(),
-        ),
-        (route) => false,
-      );
+      _showEmailVerificationMessage(email: user.email ?? '');
+      return;
+    }
+
+    Future.microtask(() async {
+      try {
+        await _handleVerifiedCustomerSession(user);
+      } catch (e) {
+        debugPrint('Startup customer session sync error: $e');
+      }
     });
   }
 
   Future<void> createOrUpdateProfile(User user) async {
+    if (user.emailConfirmedAt == null) {
+      return;
+    }
+
     final supabase = Supabase.instance.client;
 
     try {
@@ -132,11 +117,8 @@ class _LoginScreenState extends State<LoginScreen> {
         // Insert new profile
         await supabase.from('customer_profiles').insert({
           'user_id': user.id,
-          'name':
-              user.userMetadata?['full_name']?.toString().trim().isNotEmpty ==
-                  true
-              ? user.userMetadata!['full_name'].toString().trim()
-              : 'New User',
+          'name': user.userMetadata?['full_name']?.toString().trim() ?? '',
+          'email': user.email ?? '',
           'phone': '',
           'address': '',
         });
@@ -247,25 +229,20 @@ class _LoginScreenState extends State<LoginScreen> {
         final user = supabase.auth.currentUser;
         debugPrint('Logged in user id: ${user?.id}');
 
-        await DriverSession.clear();
+        if (user?.emailConfirmedAt == null) {
+          await supabase.auth.signOut();
 
-        // Load customer profile
+          if (!mounted) {
+            return;
+          }
+
+          _showEmailVerificationMessage(email: email);
+          return;
+        }
+
         if (user != null) {
           try {
-            await createOrUpdateProfile(user);
-
-            final profile = await supabase
-                .from('customer_profiles')
-                .select()
-                .eq('user_id', user.id)
-                .single();
-
-            await CustomerSession.save(
-              customerId: user.id,
-              customerName: profile['name'] ?? '',
-              customerPhone: profile['phone'],
-              customerAddress: profile['address'],
-            );
+            await _handleVerifiedCustomerSession(user);
           } catch (profileError) {
             debugPrint('Profile load error: $profileError');
             // Continue with partial data if profile fetch fails
@@ -275,14 +252,6 @@ class _LoginScreenState extends State<LoginScreen> {
         if (!mounted) {
           return;
         }
-
-        // Navigate to dashboard (auth gate will also pick up the change)
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute<void>(
-            builder: (_) => const CustomerNavShell(),
-          ),
-          (route) => false,
-        );
 
       } else {
         final inputCode = _secretCodeController.text.trim();
@@ -365,9 +334,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
       debugPrint('Login auth error: ${e.message}');
 
+      final message = _friendlyAuthExceptionMessage(e);
+
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Login failed: ${e.message}')));
+      ).showSnackBar(SnackBar(content: Text(message)));
     } on SocketException catch (e) {
       if (!mounted) {
         return;
@@ -419,6 +390,145 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       debugPrint('Supabase connection ERROR: $e');
       rethrow;
+    }
+  }
+
+  String _friendlyAuthExceptionMessage(AuthException error) {
+    final message = error.message.toLowerCase();
+
+    if (message.contains('email not confirmed')) {
+      return 'Your email has not been verified. Please verify your email before logging in.';
+    }
+
+    if (message.contains('invalid login credentials') ||
+        message.contains('invalid email or password')) {
+      return 'Invalid email or password';
+    }
+
+    return 'Login failed. Please try again.';
+  }
+
+  // TODO: Keep the mobile verification redirect aligned with Supabase and
+  // platform deep-link settings so verified users return to the Flutter app.
+
+  Future<void> _handleVerifiedCustomerSession(User user) async {
+    if (_isNavigatingAfterAuth) {
+      return;
+    }
+
+    if (user.emailConfirmedAt == null) {
+      await Supabase.instance.client.auth.signOut();
+      if (!mounted) {
+        return;
+      }
+
+      _isNavigatingAfterAuth = false;
+      _showEmailVerificationMessage(email: user.email ?? '');
+      return;
+    }
+
+    _isNavigatingAfterAuth = true;
+
+    try {
+      await DriverSession.clear();
+      await createOrUpdateProfile(user);
+
+      final profile = await Supabase.instance.client
+          .from('customer_profiles')
+          .select()
+          .eq('user_id', user.id)
+          .single();
+
+      await CustomerSession.save(
+        customerId: user.id,
+        customerName: profile['name'] ?? '',
+        customerPhone: profile['phone'],
+        customerAddress: profile['address'],
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (_) => const CustomerNavShell(),
+        ),
+        (route) => false,
+      );
+    } catch (_) {
+      _isNavigatingAfterAuth = false;
+      rethrow;
+    }
+  }
+
+  void _showEmailVerificationMessage({String email = ''}) {
+    if (!mounted) {
+      return;
+    }
+
+    final hasEmail = email.trim().isNotEmpty;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Please verify your email before logging in.',
+        ),
+        action: hasEmail
+            ? SnackBarAction(
+                label: 'Resend',
+                onPressed: () {
+                  _resendVerificationEmail(email.trim());
+                },
+              )
+            : null,
+      ),
+    );
+  }
+
+  Future<void> _resendVerificationEmail(String email) async {
+    if (_isLoading || email.trim().isEmpty) {
+      return;
+    }
+
+    try {
+      await Supabase.instance.client.auth.resend(
+        type: OtpType.signup,
+        email: email,
+        emailRedirectTo: 'io.supabase.flutter://login-callback',
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Verification email sent again.'),
+        ),
+      );
+    } on AuthException catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      debugPrint('Verification resend auth error: ${e.message}');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to resend verification email. Please try again.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      debugPrint('Verification resend error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to resend verification email. Please try again.'),
+        ),
+      );
     }
   }
 

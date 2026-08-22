@@ -12,7 +12,7 @@ class TrackOrderScreen extends StatefulWidget {
     this.totalGallons = 5,
     this.address = 'Home Address, Cebu City',
     this.deliveryType = 'now',
-    this.status = 'on_the_way',
+    this.status = 'pending',
     this.scheduledDate,
     this.scheduledTime,
     this.driverName = 'John Doe',
@@ -36,43 +36,61 @@ class TrackOrderScreen extends StatefulWidget {
 class _TrackOrderScreenState extends State<TrackOrderScreen> {
   static const Color _primaryBlue = Color(0xFF2563EB);
   static const Color _background = Color(0xFFF6F8FB);
-  static const LatLng _customerLocation = LatLng(14.5995, 120.9842);
-  static const LatLng _driverLocation = LatLng(14.6095, 120.9892);
+
+  static const LatLng _customerLocation =
+      LatLng(14.5995, 120.9842);
+
+  static const LatLng _driverLocation =
+      LatLng(14.6095, 120.9892);
 
   String get _normalizedStatus {
-    final raw = widget.status.trim().toLowerCase().replaceAll(' ', '_');
+    final raw = widget.status
+        .trim()
+        .toLowerCase()
+        .replaceAll(' ', '_');
 
-    if (raw.contains('delivered') || raw.contains('completed')) {
+    if (raw.contains('delivered') ||
+        raw.contains('completed')) {
       return 'delivered';
     }
+
     if (raw.contains('assigned')) {
       return 'assigned';
     }
+
     if (raw.contains('scheduled')) {
       return 'scheduled';
     }
-    if (raw.contains('on_the_way') || raw.contains('out_for_delivery')) {
+
+    if (raw.contains('on_the_way') ||
+        raw.contains('out_for_delivery')) {
       return 'on_the_way';
     }
+
     if (raw.contains('confirmed')) {
-      return widget.deliveryType == 'scheduled' ? 'scheduled' : 'on_the_way';
+      return widget.deliveryType == 'scheduled'
+          ? 'scheduled'
+          : 'on_the_way';
     }
 
-    return widget.deliveryType == 'scheduled' ? 'scheduled' : 'on_the_way';
+    return 'pending';
   }
 
   DateTime? get _effectiveScheduledDate {
     if (_normalizedStatus != 'scheduled') {
       return null;
     }
-    return widget.scheduledDate ?? DateTime(2026, 4, 20);
+
+    return widget.scheduledDate ?? DateTime.now();
   }
 
   TimeOfDay? get _effectiveScheduledTime {
     if (_normalizedStatus != 'scheduled') {
       return null;
     }
-    return widget.scheduledTime ?? const TimeOfDay(hour: 9, minute: 0);
+
+    return widget.scheduledTime ??
+        const TimeOfDay(hour: 9, minute: 0);
   }
 
   String _formatDate(DateTime date) {
@@ -90,34 +108,46 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
       'November',
       'December',
     ];
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+
+    return '${months[date.month - 1]} '
+        '${date.day}, ${date.year}';
   }
 
   String _statusTitle() {
     switch (_normalizedStatus) {
       case 'assigned':
         return 'Driver Assigned';
+
       case 'scheduled':
         return 'Scheduled Delivery';
+
       case 'delivered':
         return 'Delivered';
+
       case 'on_the_way':
-      default:
         return 'Driver is on the way';
+
+      default:
+        return 'Waiting for Confirmation';
     }
   }
 
   String _statusMessage() {
     switch (_normalizedStatus) {
       case 'assigned':
-        return 'Driver Assigned';
+        return 'Driver has been assigned to your order.';
+
       case 'scheduled':
-        return 'Your order is scheduled. Delivery will start at the selected time.';
+        return 'Your order is scheduled for delivery.';
+
       case 'delivered':
-        return 'Delivered';
+        return 'Your order has been successfully delivered.';
+
       case 'on_the_way':
+        return 'Your driver is currently on the way.';
+
       default:
-        return 'Driver is on the way';
+        return 'Waiting for store confirmation.';
     }
   }
 
@@ -129,27 +159,33 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _statusTitle(),
-            style: const TextStyle(
+          const Text(
+            'Order Status',
+            style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w700,
               color: Color(0xFF0F172A),
             ),
           ),
-          if (_normalizedStatus == 'scheduled' &&
-              scheduledDate != null &&
-              scheduledTime != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              '${_formatDate(scheduledDate)} • ${scheduledTime.format(context)}',
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              _statusTitle(),
               style: const TextStyle(
-                fontSize: 14,
-                color: Color(0xFF1D4ED8),
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
+                color: Color(0xFF854D0E),
               ),
             ),
-          ],
+          ),
           const SizedBox(height: 8),
           Text(
             _statusMessage(),
@@ -159,13 +195,28 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
               height: 1.35,
             ),
           ),
+          if (_normalizedStatus == 'scheduled' &&
+              scheduledDate != null &&
+              scheduledTime != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${_formatDate(scheduledDate)} • '
+              '${scheduledTime.format(context)}',
+              style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF1D4ED8),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildMapSection() {
-    if (_normalizedStatus == 'scheduled') {
+    if (_normalizedStatus == 'pending' ||
+        _normalizedStatus == 'scheduled') {
       return _CardContainer(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -185,10 +236,13 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
               decoration: BoxDecoration(
                 color: const Color(0xFFEFF4FF),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFC7D7FE)),
+                border: Border.all(
+                  color: const Color(0xFFC7D7FE),
+                ),
               ),
               child: const Text(
-                'Tracking will be available once delivery starts',
+                'Tracking will be available once '
+                'your order is accepted.',
                 style: TextStyle(
                   color: Color(0xFF1E3A8A),
                   fontWeight: FontWeight.w600,
@@ -226,8 +280,10 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
                 children: [
                   TileLayer(
                     urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.aquaenlavada.app',
+                        'https://tile.openstreetmap.org/'
+                        '{z}/{x}/{y}.png',
+                    userAgentPackageName:
+                        'com.aquaenlavada.app',
                   ),
                   MarkerLayer(
                     markers: [
@@ -264,6 +320,9 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheduledDate = _effectiveScheduledDate;
+    final scheduledTime = _effectiveScheduledTime;
+
     return Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
@@ -276,7 +335,9 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           _buildStatusCard(),
+
           const SizedBox(height: 14),
+
           _CardContainer(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -290,24 +351,38 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                _InfoRow(label: 'Order ID', value: widget.orderId),
+                _InfoRow(
+                  label: 'Order ID',
+                  value: widget.orderId,
+                ),
                 const SizedBox(height: 8),
                 _InfoRow(
                   label: 'Gallons Ordered',
-                  value: '${widget.totalGallons} Gallons',
+                  value:
+                      '${widget.totalGallons} Gallons',
                 ),
                 const SizedBox(height: 8),
-                _InfoRow(label: 'Address', value: widget.address),
+                _InfoRow(
+                  label: 'Address',
+                  value: widget.address,
+                ),
               ],
             ),
           ),
+
           const SizedBox(height: 14),
+
           _buildMapSection(),
+
           const SizedBox(height: 14),
+
           _CardContainer(
             child: Row(
               children: [
-                const Icon(Icons.local_shipping_outlined, color: _primaryBlue),
+                const Icon(
+                  Icons.local_shipping_outlined,
+                  color: _primaryBlue,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -322,39 +397,55 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
               ],
             ),
           ),
+
+          if (scheduledDate != null &&
+              scheduledTime != null) ...[
+            const SizedBox(height: 14),
+            _CardContainer(
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Scheduled Delivery',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${_formatDate(scheduledDate)} • '
+                    '${scheduledTime.format(context)}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1D4ED8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _CardContainer extends StatelessWidget {
-  const _CardContainer({required this.child});
+/*
+|--------------------------------------------------------------------------
+| CUSTOMER TRACK ORDER SCREEN
+|--------------------------------------------------------------------------
+*/
 
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14233455),
-            blurRadius: 14,
-            offset: Offset(0, 6),
-          ),
-        ],
-      ),
-      child: child,
-    );
-  }
-}
-
-class CustomerTrackOrderScreen extends StatefulWidget {
-  const CustomerTrackOrderScreen({super.key, required this.order});
+class CustomerTrackOrderScreen
+    extends StatefulWidget {
+  const CustomerTrackOrderScreen({
+    super.key,
+    required this.order,
+  });
 
   final Map<String, dynamic> order;
 
@@ -363,315 +454,515 @@ class CustomerTrackOrderScreen extends StatefulWidget {
       _CustomerTrackOrderScreenState();
 }
 
-class _CustomerTrackOrderScreenState extends State<CustomerTrackOrderScreen> {
-  Map<String, dynamic> _liveOrder = <String, dynamic>{};
+class _CustomerTrackOrderScreenState
+    extends State<CustomerTrackOrderScreen>
+    with WidgetsBindingObserver {
+  Map<String, dynamic> _liveOrder =
+      <String, dynamic>{};
+
   Timer? _timer;
+
   String? driverName;
   String driverPhone = '';
+
   bool isLoadingDriver = false;
+
   String? _currentDriverId;
 
-  static const Color _background = Color(0xFFF6F8FB);
+  bool _isRefreshing = false;
+
+  static const Color _background =
+      Color(0xFFF6F8FB);
+
+  static const Color _primaryBlue =
+      Color(0xFF2563EB);
 
   @override
   void initState() {
     super.initState();
-    _liveOrder = Map<String, dynamic>.from(widget.order);
+
+    WidgetsBinding.instance.addObserver(this);
+
+    _liveOrder =
+        Map<String, dynamic>.from(widget.order);
+
     loadDriver();
+    fetchOrder();
     startAutoRefresh();
   }
 
-  Future<void> loadDriver() async {
-    try {
-      final supabase = Supabase.instance.client;
-      final driverId = _liveOrder['driver_id'];
+  @override
+  void didChangeAppLifecycleState(
+      AppLifecycleState state) {
+    if (state ==
+        AppLifecycleState.resumed) {
+      fetchOrder();
+      startAutoRefresh();
+    }
 
-      debugPrint('Driver ID from order: $driverId');
-
-      // If no driver assigned yet
-      if (driverId == null || driverId.toString().isEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _currentDriverId = null;
-          driverName = 'Waiting for driver...';
-          driverPhone = '';
-          isLoadingDriver = false;
-        });
-        return;
-      }
-
-      final driverIdString = driverId.toString();
-      if (_currentDriverId == driverIdString &&
-          driverName != null &&
-          driverName!.isNotEmpty) {
-        return;
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _currentDriverId = driverIdString;
-        isLoadingDriver = true;
-      });
-
-      // Fetch driver safely (TEXT vs UUID fix)
-      final response = await supabase
-          .from('employees')
-          .select('*')
-          .eq('id', driverIdString)
-          .maybeSingle();
-
-      debugPrint('Driver response: $response');
-
-      if (!mounted) return;
-
-      if (response == null) {
-        setState(() {
-          driverName = 'Driver not found';
-          driverPhone = '';
-          isLoadingDriver = false;
-        });
-        return;
-      }
-
-      setState(() {
-        driverName = response['name'] ?? 'Unknown Driver';
-        driverPhone = response['contact'] ?? '';
-        isLoadingDriver = false;
-      });
-    } catch (e) {
-      debugPrint('Driver fetch error: $e');
-
-      if (!mounted) return;
-
-      setState(() {
-        driverName = 'Error loading driver';
-        driverPhone = '';
-        isLoadingDriver = false;
-      });
+    if (state ==
+        AppLifecycleState.paused) {
+      _timer?.cancel();
     }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+
+    WidgetsBinding.instance
+        .removeObserver(this);
+
     super.dispose();
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | AUTO REFRESH
+  |--------------------------------------------------------------------------
+  */
+
   void startAutoRefresh() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
-      fetchOrder();
-    });
+
+    _timer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) {
+        fetchOrder();
+      },
+    );
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | FETCH LATEST ORDER
+  |--------------------------------------------------------------------------
+  */
+
   Future<void> fetchOrder() async {
-    final orderId = _liveOrder['id']?.toString().trim() ?? '';
+    if (_isRefreshing) {
+      return;
+    }
+
+    final orderId =
+        _liveOrder['id']
+                ?.toString()
+                .trim() ??
+            '';
+
     if (orderId.isEmpty) {
       return;
     }
 
-    try {
-      final response = await Supabase.instance.client
-          .from('orders')
-          .select()
-          .eq('id', orderId)
-          .single();
+    _isRefreshing = true;
 
-      if (!mounted) {
+    try {
+      final response =
+          await Supabase.instance.client
+              .from('orders')
+              .select()
+              .eq('id', orderId)
+              .maybeSingle();
+
+      if (!mounted || response == null) {
         return;
       }
 
-      // Fetch driver info from employees table if driver_id exists
-      if (response['driver_id'] != null) {
+      final driverId =
+          response['driver_id'];
+
+      if (driverId != null &&
+          driverId.toString().isNotEmpty) {
         try {
-          final driverId = response['driver_id'].toString();
-          final driverData = await Supabase.instance.client
-              .from('employees')
-              .select('full_name, name, phone, mobile_number')
-              .eq('id', driverId)
-              .maybeSingle();
+          final driverData =
+              await Supabase.instance.client
+                  .from('employees')
+                  .select(
+                    'full_name, name, phone, mobile_number',
+                  )
+                  .eq(
+                    'id',
+                    driverId.toString(),
+                  )
+                  .maybeSingle();
 
           if (driverData != null) {
             response['driver_name'] =
-                driverData['full_name'] ?? driverData['name'] ?? 'Driver';
+                driverData['full_name'] ??
+                    driverData['name'] ??
+                    'Driver';
+
             response['driver_phone'] =
-                driverData['phone'] ?? driverData['mobile_number'] ?? '';
+                driverData['phone'] ??
+                    driverData[
+                        'mobile_number'] ??
+                    '';
           }
         } catch (_) {
-          // If employees query fails, use existing values
+          // Keep existing driver information.
         }
       }
 
-      final previousStatus = _liveOrder['status']?.toString();
-      final newStatus = response['status']?.toString();
-      final previousDriverId = _liveOrder['driver_id']?.toString();
-      final newDriverId = response['driver_id']?.toString();
+      final oldOrder = _liveOrder;
 
-      if (previousStatus != newStatus ||
-          previousDriverId != newDriverId ||
-          _liveOrder['driver_name'] != response['driver_name'] ||
-          _liveOrder['driver_phone'] != response['driver_phone']) {
+      final oldStatus =
+          oldOrder['status']?.toString();
+
+      final newStatus =
+          response['status']?.toString();
+
+      final oldPayment =
+          _normalizePaymentStatus(
+        oldOrder['payment_status']
+            ?.toString(),
+      );
+
+      final newPayment =
+          _normalizePaymentStatus(
+        response['payment_status']
+            ?.toString(),
+      );
+
+      final oldVerifiedAt =
+          oldOrder['payment_verified_at']
+              ?.toString();
+
+      final newVerifiedAt =
+          response['payment_verified_at']
+              ?.toString();
+
+      final oldRejectedAt =
+          oldOrder['payment_rejected_at']
+              ?.toString();
+
+      final newRejectedAt =
+          response['payment_rejected_at']
+              ?.toString();
+
+      final oldReason =
+          oldOrder[
+                  'payment_rejection_reason']
+              ?.toString();
+
+      final newReason =
+          response[
+                  'payment_rejection_reason']
+              ?.toString();
+
+      final oldDriverId =
+          oldOrder['driver_id']
+              ?.toString();
+
+      final newDriverId =
+          response['driver_id']
+              ?.toString();
+
+      final changed =
+          oldStatus != newStatus ||
+          oldPayment != newPayment ||
+          oldVerifiedAt != newVerifiedAt ||
+          oldRejectedAt != newRejectedAt ||
+          oldReason != newReason ||
+          oldDriverId != newDriverId ||
+          oldOrder['driver_name'] !=
+              response['driver_name'] ||
+          oldOrder['driver_phone'] !=
+              response['driver_phone'];
+
+      if (changed) {
         setState(() {
-          _liveOrder = Map<String, dynamic>.from(response);
+          _liveOrder =
+              Map<String, dynamic>.from(
+            response,
+          );
         });
+
         await loadDriver();
+      } else {
+        _liveOrder =
+            Map<String, dynamic>.from(
+          response,
+        );
       }
-    } catch (_) {
-      // Keep last known UI state if polling request fails.
+    } catch (e) {
+      debugPrint(
+        'Track order refresh error: $e',
+      );
+    } finally {
+      _isRefreshing = false;
     }
   }
 
-  Map<String, dynamic> get _order => _liveOrder;
+  /*
+  |--------------------------------------------------------------------------
+  | DRIVER
+  |--------------------------------------------------------------------------
+  */
 
-  String _deliveryType() => '${_order['delivery_type'] ?? 'now'}'.toLowerCase();
+  Future<void> loadDriver() async {
+    try {
+      final driverId =
+          _liveOrder['driver_id'];
 
-  String _status() => '${_order['status'] ?? ''}'.toLowerCase();
+      if (driverId == null ||
+          driverId.toString().isEmpty) {
+        if (!mounted) return;
+
+        setState(() {
+          _currentDriverId = null;
+          driverName =
+              'Waiting for driver...';
+          driverPhone = '';
+          isLoadingDriver = false;
+        });
+
+        return;
+      }
+
+      final driverIdString =
+          driverId.toString();
+
+      if (_currentDriverId ==
+              driverIdString &&
+          driverName != null &&
+          driverName!.isNotEmpty) {
+        return;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentDriverId =
+            driverIdString;
+        isLoadingDriver = true;
+      });
+
+      final response =
+          await Supabase.instance.client
+              .from('employees')
+              .select(
+                'full_name, name, phone, mobile_number',
+              )
+              .eq(
+                'id',
+                driverIdString,
+              )
+              .maybeSingle();
+
+      if (!mounted) return;
+
+      if (response == null) {
+        setState(() {
+          driverName =
+              'Driver not found';
+          driverPhone = '';
+          isLoadingDriver = false;
+        });
+
+        return;
+      }
+
+      setState(() {
+        driverName =
+            response['full_name'] ??
+                response['name'] ??
+                'Unknown Driver';
+
+        driverPhone =
+            response['phone'] ??
+                response['mobile_number'] ??
+                '';
+
+        isLoadingDriver = false;
+      });
+    } catch (e) {
+      debugPrint(
+        'Driver fetch error: $e',
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        driverName =
+            'Unable to load driver';
+        driverPhone = '';
+        isLoadingDriver = false;
+      });
+    }
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | ORDER HELPERS
+  |--------------------------------------------------------------------------
+  */
+
+  Map<String, dynamic> get _order =>
+      _liveOrder;
+
+  String _status() {
+    return '${_order['status'] ?? ''}'
+        .trim()
+        .toLowerCase();
+  }
 
   String _normalizedStatus() {
-    final raw = _status().replaceAll(' ', '_');
-    if (raw == 'completed') return 'delivered';
-    if (raw == 'delivering' || raw == 'in_progress' || raw == 'out_for_delivery') {
+    final raw =
+        _status().replaceAll(
+      ' ',
+      '_',
+    );
+
+    if (raw == 'completed') {
+      return 'delivered';
+    }
+
+    if (raw == 'delivering' ||
+        raw == 'in_progress' ||
+        raw == 'out_for_delivery') {
       return 'on_the_way';
     }
-    if (raw == 'accepted' || raw == 'preparing') return 'assigned';
-    if (raw.isEmpty) return 'pending';
+
+    if (raw == 'accepted' ||
+        raw == 'preparing') {
+      return 'assigned';
+    }
+
+    if (raw.isEmpty) {
+      return 'pending';
+    }
+
     return raw;
   }
 
-  bool get _isScheduled => _deliveryType() == 'scheduled';
+  /*
+  |--------------------------------------------------------------------------
+  | PAYMENT STATUS
+  |--------------------------------------------------------------------------
+  */
 
-  bool get _isDelivering {
-    final status = _normalizedStatus();
-    return status == 'on_the_way' || status == 'delivering';
-  }
+  String _normalizePaymentStatus(
+      String? rawValue) {
+    final value =
+        (rawValue ?? '').trim();
 
-  bool get _hasAssignedDriver {
-    final status = _normalizedStatus();
-    return status == 'assigned' ||
-        status == 'on_the_way' ||
-        status == 'delivered';
-  }
-
-  String _statusLabel() {
-    switch (_normalizedStatus()) {
-      case 'pending':
-        return 'Pending';
-      case 'assigned':
-        return 'Driver Assigned';
-      case 'on_the_way':
-        return 'Driver is on the way';
-      case 'delivered':
-        return 'Delivered';
-      default:
-        return _status().isEmpty ? 'Unknown' : '${_order['status'] ?? ''}';
+    if (value.isEmpty) {
+      return 'Pending';
     }
-  }
 
-  Color _statusColor() {
-    switch (_normalizedStatus()) {
-      case 'pending':
-        return const Color(0xFFCA8A04);
-      case 'assigned':
-        return const Color(0xFF2563EB);
-      case 'on_the_way':
-        return const Color(0xFFEA580C);
-      case 'delivered':
-        return const Color(0xFF16A34A);
-      default:
-        return const Color(0xFF64748B);
+    final normalized =
+        value.toLowerCase().replaceAll(
+              RegExp(r'\s+'),
+              '_',
+            );
+
+    if (normalized.contains(
+            'verified') ||
+        normalized.contains(
+            'approved')) {
+      return 'Verified';
     }
-  }
 
-  Color _statusBackground() {
-    switch (_normalizedStatus()) {
-      case 'pending':
-        return const Color(0xFFFEF3C7);
-      case 'assigned':
-        return const Color(0xFFDBEAFE);
-      case 'on_the_way':
-        return const Color(0xFFFFEDD5);
-      case 'delivered':
-        return const Color(0xFFDCFCE7);
-      default:
-        return const Color(0xFFF1F5F9);
+    if (normalized.contains(
+            'rejected') ||
+        normalized.contains(
+            'declined')) {
+      return 'Rejected';
     }
-  }
 
-  int _currentStepIndex() {
-    switch (_normalizedStatus()) {
-      case 'pending':
-        return 0;
-      case 'assigned':
-        return 1;
-      case 'on_the_way':
-        return 2;
-      case 'delivered':
-        return 3;
-      default:
-        return 0;
+    if (normalized.contains(
+        'pending')) {
+      return 'Pending';
     }
+
+    return 'Pending';
   }
 
-  String _gallons() => '${_order['gallons'] ?? ''} Gallons';
-
-  String _address() => '${_order['address'] ?? 'Home Address, Cebu City'}';
-
-  double _latitude() {
-    final lat = _order['latitude'];
-    if (lat is double) return lat;
-    if (lat is int) return lat.toDouble();
-    if (lat is String) return double.tryParse(lat) ?? 14.5995;
-    return 14.5995; // Default Cebu City
+  String _paymentStatusLabel() {
+    return _normalizePaymentStatus(
+      _order['payment_status']
+          ?.toString(),
+    );
   }
 
-  double _longitude() {
-    final lng = _order['longitude'];
-    if (lng is double) return lng;
-    if (lng is int) return lng.toDouble();
-    if (lng is String) return double.tryParse(lng) ?? 120.9842;
-    return 120.9842; // Default Cebu City
+  String _paymentMethodLabel() {
+    final raw =
+        (_order['payment_method']
+                    ?.toString() ??
+                'Cash')
+            .trim()
+            .toLowerCase();
+
+    if (raw.contains('gcash')) {
+      return 'GCash';
+    }
+
+    return 'Cash';
   }
 
-  double _driverLatitude() {
-    final lat = _order['driver_lat'];
-    if (lat is double) return lat;
-    if (lat is int) return lat.toDouble();
-    if (lat is String) return double.tryParse(lat) ?? 14.5995;
-    return 14.5995; // Default Cebu City
+  bool get _isPaymentRejected =>
+      _paymentStatusLabel() ==
+      'Rejected';
+
+  bool get _isPaymentVerified =>
+      _paymentStatusLabel() ==
+      'Verified';
+
+  bool _hasReceipt() {
+    final receipt =
+        _order['receipt_url']
+            ?.toString()
+            .trim();
+
+    return receipt != null &&
+        receipt.isNotEmpty;
   }
 
-  double _driverLongitude() {
-    final lng = _order['driver_lng'];
-    if (lng is double) return lng;
-    if (lng is int) return lng.toDouble();
-    if (lng is String) return double.tryParse(lng) ?? 120.9842;
-    return 120.9842; // Default Cebu City
+  /*
+  |--------------------------------------------------------------------------
+  | REJECTION REASON
+  |--------------------------------------------------------------------------
+  */
+
+  String? _paymentRejectionReason() {
+    final value =
+        _order[
+                'payment_rejection_reason']
+            ?.toString()
+            .trim();
+
+    if (value == null ||
+        value.isEmpty) {
+      return null;
+    }
+
+    return value;
   }
 
-  bool _hasDriverLocation() {
-    final lat = _order['driver_lat'];
-    final lng = _order['driver_lng'];
-    return lat != null && lng != null;
+  /*
+  |--------------------------------------------------------------------------
+  | PAYMENT VERIFIED DATE
+  |--------------------------------------------------------------------------
+  */
+
+  DateTime? _paymentVerifiedAt() {
+    final raw =
+        _order['payment_verified_at'];
+
+    if (raw is DateTime) {
+      return raw;
+    }
+
+    if (raw is String &&
+        raw.trim().isNotEmpty) {
+      return DateTime.tryParse(raw);
+    }
+
+    return null;
   }
 
-  DateTime? _scheduledDate() {
-    final raw = _order['scheduled_date'];
-    if (raw == null) return null;
-    return DateTime.tryParse(raw.toString());
-  }
-
-  TimeOfDay? _scheduledTime() {
-    final rawTime = _order['scheduled_time']?.toString();
-    if (rawTime == null || rawTime.isEmpty) return null;
-    final parts = rawTime.split(':');
-    if (parts.length < 2) return null;
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-    if (hour == null || minute == null) return null;
-    return TimeOfDay(hour: hour, minute: minute);
-  }
-
-  String _formatDate(DateTime date) {
+  String _formatPaymentDateTime(
+      DateTime dateTime) {
     const months = [
       'Jan',
       'Feb',
@@ -687,323 +978,935 @@ class _CustomerTrackOrderScreenState extends State<CustomerTrackOrderScreen> {
       'Dec',
     ];
 
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+    final hour =
+        dateTime.hour
+            .toString()
+            .padLeft(2, '0');
+
+    final minute =
+        dateTime.minute
+            .toString()
+            .padLeft(2, '0');
+
+    return '${months[dateTime.month - 1]} '
+        '${dateTime.day}, '
+        '${dateTime.year} • '
+        '$hour:$minute';
   }
 
-  Widget _buildProgressTrackerRow() {
-    const steps = ['Order Placed', 'Accepted', 'On the Way', 'Delivered'];
-    final currentStep = _currentStepIndex();
+  /*
+  |--------------------------------------------------------------------------
+  | PAYMENT CARD
+  |--------------------------------------------------------------------------
+  |
+  | IMPORTANT:
+  | - No Down Payment
+  | - No Remaining Balance
+  | - No GCash Reference
+  | - GCash is FULL PAYMENT
+  | - Receipt verification remains
+  |--------------------------------------------------------------------------
+  */
 
-    return _CardContainer(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Delivery Status',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF0F172A),
+  Widget _buildPaymentStatusCard() {
+    final paymentMethod =
+        _paymentMethodLabel();
+
+    /*
+    |--------------------------------------------------------------------------
+    | COD
+    |--------------------------------------------------------------------------
+    */
+
+    if (paymentMethod != 'GCash') {
+      return _CardContainer(
+        child: Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Payment Status',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight:
+                    FontWeight.w700,
+                color: Color(0xFF0F172A),
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(steps.length, (index) {
-              final isCompleted = index <= currentStep;
-              final isCurrent = index == currentStep;
 
-              return Column(
-                children: [
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundColor: isCompleted
-                        ? const Color(0xFF16A34A)
-                        : const Color(0xFFE2E8F0),
-                    child: isCompleted
-                        ? const Icon(Icons.check, size: 20, color: Colors.white)
-                        : Text(
-                            '${index + 1}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: isCurrent
-                                  ? const Color(0xFF2563EB)
-                                  : const Color(0xFF94A3B8),
-                            ),
-                          ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: 70,
-                    child: Text(
-                      steps[index],
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: isCurrent
-                            ? FontWeight.w700
-                            : FontWeight.w600,
-                        color: isCompleted
-                            ? const Color(0xFF0F172A)
-                            : const Color(0xFF64748B),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            }),
-          ),
-        ],
-      ),
-    );
-  }
+            const SizedBox(height: 12),
 
-  Widget _buildDirectDriverCard() {
-    final displayName = driverName ?? 'No driver assigned';
-
-    return _CardContainer(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Assigned Driver',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF0F172A),
+            _paymentBadge(
+              text: 'Cash on Delivery',
+              background:
+                  const Color(0xFFE2E8F0),
+              textColor:
+                  const Color(0xFF334155),
             ),
-          ),
-          const SizedBox(height: 12),
-          isLoadingDriver
-              ? const Text(
-                  'Loading driver information...',
-                  style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-                )
-              : _InfoRow(label: 'Driver Name', value: displayName),
-          if (!isLoadingDriver && driverPhone.isNotEmpty) ...[
+
             const SizedBox(height: 8),
-            _InfoRow(label: 'Phone Number', value: driverPhone),
-          ],
-        ],
-      ),
-    );
-  }
 
-  Widget _buildScheduleCard(
-    BuildContext context,
-    DateTime scheduledDate,
-    TimeOfDay scheduledTime,
-  ) {
+            const Text(
+              'Payment will be collected upon delivery.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF475569),
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | REJECTED
+    |--------------------------------------------------------------------------
+    */
+
+    if (_isPaymentRejected) {
+      final reason =
+          _paymentRejectionReason();
+
+      return _CardContainer(
+        child: Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Payment Status',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight:
+                    FontWeight.w700,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            _paymentBadge(
+              text: 'Payment Rejected',
+              background:
+                  const Color(0xFFFEE2E2),
+              textColor:
+                  const Color(0xFFB91C1C),
+            ),
+
+            const SizedBox(height: 8),
+
+            const Text(
+              'Your GCash payment could not be verified.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF475569),
+                height: 1.35,
+              ),
+            ),
+
+            if (reason != null) ...[
+              const SizedBox(height: 12),
+
+              _InfoRow(
+                label: 'Reason',
+                value: reason,
+              ),
+            ],
+
+            const SizedBox(height: 12),
+
+            const Text(
+              'Please contact HydroHub support if you believe this was a mistake.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFFB91C1C),
+                fontWeight:
+                    FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VERIFIED
+    |--------------------------------------------------------------------------
+    */
+
+    if (_isPaymentVerified) {
+      final verifiedAt =
+          _paymentVerifiedAt();
+
+      return _CardContainer(
+        child: Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Payment Status',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight:
+                    FontWeight.w700,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            _paymentBadge(
+              text: 'Payment Verified',
+              background:
+                  const Color(0xFFDCFCE7),
+              textColor:
+                  const Color(0xFF166534),
+            ),
+
+            const SizedBox(height: 8),
+
+            const Text(
+              'Your full GCash payment has been verified. Your order can now proceed.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF475569),
+                height: 1.35,
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            _InfoRow(
+              label: 'Payment Method',
+              value: 'GCash',
+            ),
+
+            const SizedBox(height: 8),
+
+            _InfoRow(
+              label: 'Payment',
+              value: 'Full Payment',
+            ),
+
+            const SizedBox(height: 8),
+
+            _InfoRow(
+              label: 'Receipt',
+              value: _hasReceipt()
+                  ? 'Submitted'
+                  : 'Not available',
+            ),
+
+            if (verifiedAt != null) ...[
+              const SizedBox(height: 8),
+
+              _InfoRow(
+                label: 'Verified At',
+                value:
+                    _formatPaymentDateTime(
+                  verifiedAt,
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PENDING VERIFICATION
+    |--------------------------------------------------------------------------
+    */
+
     return _CardContainer(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
         children: [
           const Text(
-            'Scheduled Delivery',
+            'Payment Status',
             style: TextStyle(
               fontSize: 16,
-              fontWeight: FontWeight.w700,
+              fontWeight:
+                  FontWeight.w700,
               color: Color(0xFF0F172A),
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            '${_formatDate(scheduledDate)} • ${scheduledTime.format(context)}',
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF1D4ED8),
-            ),
+
+          const SizedBox(height: 12),
+
+          _paymentBadge(
+            text:
+                'Payment Verification Pending',
+            background:
+                const Color(0xFFFEF3C7),
+            textColor:
+                const Color(0xFF854D0E),
           ),
+
           const SizedBox(height: 8),
+
           const Text(
-            'Delivery will start at scheduled time',
+            'Your full GCash payment is being verified by HydroHub.',
             style: TextStyle(
               fontSize: 13,
               color: Color(0xFF475569),
               height: 1.35,
             ),
           ),
+
+          const SizedBox(height: 12),
+
+          _InfoRow(
+            label: 'Payment Method',
+            value: 'GCash',
+          ),
+
+          const SizedBox(height: 8),
+
+          _InfoRow(
+            label: 'Payment',
+            value: 'Full Payment',
+          ),
+
+          const SizedBox(height: 8),
+
+          _InfoRow(
+            label: 'Receipt',
+            value: _hasReceipt()
+                ? 'Submitted for verification'
+                : 'Not submitted',
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildStatusCard() {
+  Widget _paymentBadge({
+    required String text,
+    required Color background,
+    required Color textColor,
+  }) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 6,
+      ),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius:
+            BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight:
+              FontWeight.w700,
+          color: textColor,
+        ),
+      ),
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | ORDER STATUS
+  |--------------------------------------------------------------------------
+  */
+
+  String _statusLabel() {
+    if (_isPaymentRejected) {
+      return 'Payment Rejected';
+    }
+
+    switch (_normalizedStatus()) {
+      case 'pending':
+        return 'Pending';
+
+      case 'assigned':
+        return 'Driver Assigned';
+
+      case 'on_the_way':
+        return 'Driver is on the way';
+
+      case 'delivered':
+        return 'Delivered';
+
+      default:
+        return 'Pending';
+    }
+  }
+
+  String _statusMessageLive() {
+    if (_isPaymentRejected) {
+      return 'This order cannot proceed because the GCash payment was rejected.';
+    }
+
+    switch (_normalizedStatus()) {
+      case 'pending':
+        return 'Waiting for store confirmation.';
+
+      case 'assigned':
+        return 'A driver has been assigned to your order.';
+
+      case 'on_the_way':
+        return 'Your driver is currently on the way.';
+
+      case 'delivered':
+        return 'Your order has been successfully delivered.';
+
+      default:
+        return 'Waiting for store confirmation.';
+    }
+  }
+
+  Color _statusColor() {
+    if (_isPaymentRejected) {
+      return const Color(0xFFB91C1C);
+    }
+
+    switch (_normalizedStatus()) {
+      case 'pending':
+        return const Color(0xFFCA8A04);
+
+      case 'assigned':
+        return const Color(0xFF2563EB);
+
+      case 'on_the_way':
+        return const Color(0xFFEA580C);
+
+      case 'delivered':
+        return const Color(0xFF16A34A);
+
+      default:
+        return const Color(0xFF64748B);
+    }
+  }
+
+  Color _statusBackground() {
+    if (_isPaymentRejected) {
+      return const Color(0xFFFEE2E2);
+    }
+
+    switch (_normalizedStatus()) {
+      case 'pending':
+        return const Color(0xFFFEF3C7);
+
+      case 'assigned':
+        return const Color(0xFFDBEAFE);
+
+      case 'on_the_way':
+        return const Color(0xFFFFEDD5);
+
+      case 'delivered':
+        return const Color(0xFFDCFCE7);
+
+      default:
+        return const Color(0xFFF1F5F9);
+    }
+  }
+
+  Widget _buildStatusCardLive() {
     return _CardContainer(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
         children: [
           const Text(
             'Order Status',
             style: TextStyle(
               fontSize: 16,
-              fontWeight: FontWeight.w700,
+              fontWeight:
+                  FontWeight.w700,
               color: Color(0xFF0F172A),
             ),
           ),
+
           const SizedBox(height: 12),
+
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding:
+                const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 6,
+            ),
             decoration: BoxDecoration(
               color: _statusBackground(),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: _statusColor().withValues(alpha: 0.12),
-                width: 0.8,
-              ),
+              borderRadius:
+                  BorderRadius.circular(999),
             ),
             child: Text(
               _statusLabel(),
               style: TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.w700,
+                fontWeight:
+                    FontWeight.w700,
                 color: _statusColor(),
-                letterSpacing: 0.1,
               ),
             ),
           ),
+
           const SizedBox(height: 8),
+
           Text(
-            getStatusMessage(_normalizedStatus()),
+            _statusMessageLive(),
             style: const TextStyle(
               fontSize: 13,
               color: Color(0xFF475569),
               height: 1.35,
             ),
           ),
-          if (_normalizedStatus() == 'assigned' ||
-              _normalizedStatus() == 'on_the_way') ...[
+        ],
+      ),
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | DELIVERY PROGRESS
+  |--------------------------------------------------------------------------
+  */
+
+  int _currentStepIndex() {
+    if (_isPaymentRejected) {
+      return 0;
+    }
+
+    switch (_normalizedStatus()) {
+      case 'pending':
+        return 0;
+
+      case 'assigned':
+        return 1;
+
+      case 'on_the_way':
+        return 2;
+
+      case 'delivered':
+        return 3;
+
+      default:
+        return 0;
+    }
+  }
+
+  Widget _buildProgressTrackerRow() {
+    if (_isPaymentRejected) {
+      return const SizedBox.shrink();
+    }
+
+    const steps = [
+      'Order Placed',
+      'Accepted',
+      'On the Way',
+      'Delivered',
+    ];
+
+    final currentStep =
+        _currentStepIndex();
+
+    return _CardContainer(
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Delivery Status',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight:
+                  FontWeight.w700,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          Row(
+            mainAxisAlignment:
+                MainAxisAlignment
+                    .spaceBetween,
+            children:
+                List.generate(
+              steps.length,
+              (index) {
+                final isCompleted =
+                    index <= currentStep;
+
+                final isCurrent =
+                    index == currentStep;
+
+                return Column(
+                  children: [
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor:
+                          isCompleted
+                              ? const Color(
+                                  0xFF16A34A,
+                                )
+                              : const Color(
+                                  0xFFE2E8F0,
+                                ),
+                      child: isCompleted
+                          ? const Icon(
+                              Icons.check,
+                              size: 20,
+                              color:
+                                  Colors.white,
+                            )
+                          : Text(
+                              '${index + 1}',
+                              style:
+                                  TextStyle(
+                                fontSize: 12,
+                                fontWeight:
+                                    FontWeight
+                                        .w700,
+                                color: isCurrent
+                                    ? _primaryBlue
+                                    : const Color(
+                                        0xFF94A3B8,
+                                      ),
+                              ),
+                            ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    SizedBox(
+                      width: 70,
+                      child: Text(
+                        steps[index],
+                        textAlign:
+                            TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight:
+                              isCurrent
+                                  ? FontWeight
+                                      .w700
+                                  : FontWeight
+                                      .w600,
+                          color: isCompleted
+                              ? const Color(
+                                  0xFF0F172A,
+                                )
+                              : const Color(
+                                  0xFF64748B,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | DRIVER
+  |--------------------------------------------------------------------------
+  */
+
+  Widget _buildDirectDriverCard() {
+    if (_isPaymentRejected) {
+      return const SizedBox.shrink();
+    }
+
+    final displayName =
+        driverName ??
+            'Waiting for driver...';
+
+    return _CardContainer(
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Assigned Driver',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight:
+                  FontWeight.w700,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          isLoadingDriver
+              ? const Text(
+                  'Loading driver information...',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color:
+                        Color(0xFF94A3B8),
+                  ),
+                )
+              : _InfoRow(
+                  label: 'Driver Name',
+                  value: displayName,
+                ),
+
+          if (!isLoadingDriver &&
+              driverPhone.isNotEmpty) ...[
             const SizedBox(height: 8),
-            const Text(
-              'Estimated arrival: 10-15 minutes',
-              style: TextStyle(
-                fontSize: 13,
-                color: Color(0xFF1E3A8A),
-                fontWeight: FontWeight.w700,
-              ),
+            _InfoRow(
+              label: 'Phone Number',
+              value: driverPhone,
             ),
           ],
         ],
       ),
     );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | ORDER INFORMATION
+  |--------------------------------------------------------------------------
+  */
+
+  String _gallons() {
+    return '${_order['gallons'] ?? 0} Gallons';
+  }
+
+  String _address() {
+    return '${_order['address'] ?? 'No address'}';
+  }
+
+  String _totalPayment() {
+    final value =
+        _order['total_price'];
+
+    if (value is num) {
+      return '₱${value.toStringAsFixed(0)}';
+    }
+
+    final parsed =
+        num.tryParse(
+      value?.toString() ?? '',
+    );
+
+    if (parsed != null) {
+      return '₱${parsed.toStringAsFixed(0)}';
+    }
+
+    return 'Not available';
   }
 
   Widget _buildOrderInfoCard() {
     return _CardContainer(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
         children: [
           const Text(
             'Order Information',
             style: TextStyle(
               fontSize: 16,
-              fontWeight: FontWeight.w700,
+              fontWeight:
+                  FontWeight.w700,
               color: Color(0xFF0F172A),
             ),
           ),
+
           const SizedBox(height: 12),
-          _InfoRow(label: 'Gallons', value: _gallons()),
+
+          _InfoRow(
+            label: 'Gallons',
+            value: _gallons(),
+          ),
+
           const SizedBox(height: 8),
-          _InfoRow(label: 'Address', value: _address()),
-          if (_isScheduled) ...[
-            const SizedBox(height: 8),
-            Builder(
-              builder: (context) {
-                final scheduledDate = _scheduledDate();
-                final scheduledTime = _scheduledTime();
-                if (scheduledDate == null || scheduledTime == null) {
-                  return const SizedBox.shrink();
-                }
-                return _InfoRow(
-                  label: 'Scheduled',
-                  value:
-                      '${_formatDate(scheduledDate)} • ${scheduledTime.format(context)}',
-                );
-              },
-            ),
-          ],
+
+          _InfoRow(
+            label: 'Address',
+            value: _address(),
+          ),
+
+          const SizedBox(height: 8),
+
+          _InfoRow(
+            label: 'Total Payment',
+            value: _totalPayment(),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildMapSection() {
+  /*
+  |--------------------------------------------------------------------------
+  | MAP
+  |--------------------------------------------------------------------------
+  */
+
+  double _latitude() {
+    final value =
+        _order['latitude'];
+
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        14.5995;
+  }
+
+  double _longitude() {
+    final value =
+        _order['longitude'];
+
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        120.9842;
+  }
+
+  double _driverLatitude() {
+    final value =
+        _order['driver_lat'];
+
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        14.5995;
+  }
+
+  double _driverLongitude() {
+    final value =
+        _order['driver_lng'];
+
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        120.9842;
+  }
+
+  bool _hasDriverLocation() {
+    return _order['driver_lat'] != null &&
+        _order['driver_lng'] != null;
+  }
+
+  bool get _isDelivering {
+    if (_isPaymentRejected) {
+      return false;
+    }
+
+    final status =
+        _normalizedStatus();
+
+    return status ==
+            'on_the_way' ||
+        status == 'delivering';
+  }
+
+  Widget _buildMapSectionLive() {
     if (!_isDelivering) {
       return const SizedBox.shrink();
     }
 
-    final customerLat = _latitude();
-    final customerLng = _longitude();
-    final customerLocation = LatLng(customerLat, customerLng);
+    final customerLocation =
+        LatLng(
+      _latitude(),
+      _longitude(),
+    );
 
     return _CardContainer(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
         children: [
           const Text(
             'Delivery Location',
             style: TextStyle(
               fontSize: 16,
-              fontWeight: FontWeight.w700,
+              fontWeight:
+                  FontWeight.w700,
               color: Color(0xFF0F172A),
             ),
           ),
+
           const SizedBox(height: 12),
+
           ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius:
+                BorderRadius.circular(12),
             child: SizedBox(
               height: 250,
               width: double.infinity,
               child: FlutterMap(
                 options: MapOptions(
-                  initialCenter: customerLocation,
+                  initialCenter:
+                      customerLocation,
                   initialZoom: 16,
                 ),
                 children: [
                   TileLayer(
                     urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.aquaenlavada.app',
+                        'https://tile.openstreetmap.org/'
+                        '{z}/{x}/{y}.png',
+                    userAgentPackageName:
+                        'com.aquaenlavada.app',
                   ),
+
                   MarkerLayer(
                     markers: [
                       Marker(
-                        point: customerLocation,
+                        point:
+                            customerLocation,
                         width: 50,
                         height: 50,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.red.withValues(alpha: 0.3),
-                                    blurRadius: 8,
-                                    spreadRadius: 2,
-                                  ),
-                                ],
-                              ),
-                              child: const Icon(
-                                Icons.location_on,
-                                color: Colors.red,
-                                size: 40,
-                              ),
-                            ),
-                          ],
+                        child:
+                            const Icon(
+                          Icons.location_on,
+                          color:
+                              Colors.red,
+                          size: 40,
                         ),
                       ),
+
                       if (_hasDriverLocation())
                         Marker(
-                          point: LatLng(_driverLatitude(), _driverLongitude()),
+                          point: LatLng(
+                            _driverLatitude(),
+                            _driverLongitude(),
+                          ),
                           width: 40,
                           height: 40,
-                          child: const Icon(
-                            Icons.delivery_dining,
-                            color: Colors.blue,
+                          child:
+                              const Icon(
+                            Icons
+                                .delivery_dining,
+                            color:
+                                Colors.blue,
                             size: 36,
                           ),
                         ),
@@ -1013,103 +1916,216 @@ class _CustomerTrackOrderScreenState extends State<CustomerTrackOrderScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF4FF),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFC7D7FE)),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.info_outline,
-                  color: Color(0xFF1E3A8A),
-                  size: 18,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Tap map to view full address: ${_address()}',
-                    style: const TextStyle(
-                      color: Color(0xFF1E3A8A),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final scheduledDate = _scheduledDate();
-    final scheduledTime = _scheduledTime();
+  /*
+  |--------------------------------------------------------------------------
+  | BUILD
+  |--------------------------------------------------------------------------
+  */
 
+  @override
+  Widget build(
+    BuildContext context,
+  ) {
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor:
+          _background,
+
       appBar: AppBar(
-        title: const Text('Track Order'),
-        backgroundColor: _background,
+        title:
+            const Text('Track Order'),
+        backgroundColor:
+            _background,
         elevation: 0,
         scrolledUnderElevation: 0,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _buildStatusCard(),
-          const SizedBox(height: 14),
-          _buildProgressTrackerRow(),
-          if (_isScheduled &&
-              scheduledDate != null &&
-              scheduledTime != null) ...[
-            const SizedBox(height: 14),
-            _buildScheduleCard(context, scheduledDate, scheduledTime),
-          ],
-          const SizedBox(height: 14),
-          _buildDirectDriverCard(),
-          if (_hasAssignedDriver) const SizedBox(height: 14),
-          _buildOrderInfoCard(),
-          const SizedBox(height: 14),
-          _buildMapSection(),
+
+        actions: [
+          IconButton(
+            tooltip:
+                'Refresh order',
+            onPressed:
+                fetchOrder,
+            icon:
+                const Icon(
+              Icons.refresh,
+            ),
+          ),
         ],
+      ),
+
+      body: RefreshIndicator(
+        onRefresh: fetchOrder,
+
+        child: ListView(
+          physics:
+              const AlwaysScrollableScrollPhysics(),
+
+          padding:
+              const EdgeInsets.all(16),
+
+          children: [
+            _buildStatusCardLive(),
+
+            const SizedBox(height: 14),
+
+            _buildPaymentStatusCard(),
+
+            if (!_isPaymentRejected) ...[
+              const SizedBox(height: 14),
+              _buildProgressTrackerRow(),
+            ],
+
+            if (!_isPaymentRejected) ...[
+              const SizedBox(height: 14),
+              _buildDirectDriverCard(),
+            ],
+
+            const SizedBox(height: 14),
+
+            _buildOrderInfoCard(),
+
+            if (!_isPaymentRejected) ...[
+              const SizedBox(height: 14),
+              _buildMapSectionLive(),
+            ],
+
+            if (_isPaymentRejected) ...[
+              const SizedBox(height: 14),
+
+              _CardContainer(
+                child: Row(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      color:
+                          Color(0xFFDC2626),
+                    ),
+
+                    const SizedBox(width: 10),
+
+                    Expanded(
+                      child: Text(
+                        'This order cannot proceed because '
+                        'the GCash payment was rejected.',
+                        style:
+                            const TextStyle(
+                          fontSize: 13,
+                          fontWeight:
+                              FontWeight.w600,
+                          color:
+                              Color(0xFF991B1B),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 }
 
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.label, required this.value});
+/*
+|--------------------------------------------------------------------------
+| REUSABLE CARD
+|--------------------------------------------------------------------------
+*/
+
+class _CardContainer
+    extends StatelessWidget {
+  const _CardContainer({
+    required this.child,
+  });
+
+  final Widget child;
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) {
+    return Container(
+      padding:
+          const EdgeInsets.all(14),
+
+      decoration:
+          BoxDecoration(
+        color: Colors.white,
+        borderRadius:
+            BorderRadius.circular(14),
+
+        boxShadow: const [
+          BoxShadow(
+            color:
+                Color(0x14233455),
+            blurRadius: 14,
+            offset:
+                Offset(0, 6),
+          ),
+        ],
+      ),
+
+      child: child,
+    );
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| INFORMATION ROW
+|--------------------------------------------------------------------------
+*/
+
+class _InfoRow
+    extends StatelessWidget {
+  const _InfoRow({
+    required this.label,
+    required this.value,
+  });
 
   final String label;
   final String value;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    BuildContext context,
+  ) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
+
       children: [
         Text(
           label,
-          style: const TextStyle(color: Color(0xFF64748B), fontSize: 14),
+          style: const TextStyle(
+            color:
+                Color(0xFF64748B),
+            fontSize: 14,
+          ),
         ),
-        const Spacer(),
+
+        const SizedBox(width: 12),
+
         Expanded(
           child: Text(
             value,
-            textAlign: TextAlign.end,
-            style: const TextStyle(
-              color: Color(0xFF0F172A),
-              fontWeight: FontWeight.w700,
+            textAlign:
+                TextAlign.end,
+            style:
+                const TextStyle(
+              color:
+                  Color(0xFF0F172A),
+              fontWeight:
+                  FontWeight.w700,
               fontSize: 14,
             ),
           ),
@@ -1119,68 +2135,78 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
-/// Maps order status to progress step index (0-3)
-int getStepIndex(String status) {
-  final normalized = status.trim().toLowerCase().replaceAll(' ', '_');
+/*
+|--------------------------------------------------------------------------
+| STATUS HELPERS
+|--------------------------------------------------------------------------
+*/
 
-  if (normalized == 'completed') {
-    return 3; // delivered
-  }
-  if (normalized == 'delivering' ||
-      normalized == 'in_progress' ||
-      normalized == 'out_for_delivery') {
-    return 2; // on_the_way
-  }
-  if (normalized == 'accepted' || normalized == 'preparing') {
-    return 1; // assigned
-  }
-  if (normalized.isEmpty) {
-    return 0; // pending
-  }
+int getStepIndex(
+    String status) {
+  final normalized =
+      status
+          .trim()
+          .toLowerCase()
+          .replaceAll(
+            ' ',
+            '_',
+          );
 
   switch (normalized) {
     case 'pending':
       return 0;
+
+    case 'accepted':
+    case 'preparing':
     case 'assigned':
       return 1;
+
+    case 'delivering':
+    case 'in_progress':
+    case 'out_for_delivery':
     case 'on_the_way':
       return 2;
+
+    case 'completed':
     case 'delivered':
       return 3;
+
     default:
       return 0;
   }
 }
 
-/// Returns a dynamic message based on order status
-String getStatusMessage(String status) {
-  final normalized = status.trim().toLowerCase().replaceAll(' ', '_');
-
-  if (normalized == 'completed') {
-    return 'Delivered';
-  }
-  if (normalized == 'delivering' ||
-      normalized == 'in_progress' ||
-      normalized == 'out_for_delivery') {
-    return 'Driver is on the way';
-  }
-  if (normalized == 'accepted' || normalized == 'preparing') {
-    return 'Driver Assigned';
-  }
-  if (normalized.isEmpty) {
-    return 'Waiting for store confirmation';
-  }
+String getStatusMessage(
+    String status) {
+  final normalized =
+      status
+          .trim()
+          .toLowerCase()
+          .replaceAll(
+            ' ',
+            '_',
+          );
 
   switch (normalized) {
     case 'pending':
       return 'Waiting for store confirmation';
+
+    case 'accepted':
+    case 'preparing':
     case 'assigned':
       return 'Driver Assigned';
+
+    case 'delivering':
+    case 'in_progress':
+    case 'out_for_delivery':
     case 'on_the_way':
       return 'Driver is on the way';
+
+    case 'completed':
     case 'delivered':
       return 'Delivered';
+
     default:
-      return 'Order status update';
+      return 'Waiting for store confirmation';
   }
 }

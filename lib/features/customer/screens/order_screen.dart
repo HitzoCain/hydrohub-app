@@ -1,5 +1,10 @@
+import 'dart:async';
+import 'dart:io' show SocketException;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'address_screen.dart';
@@ -20,17 +25,28 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _isSubmitting = false;
   bool _isFetchingLocationPreview = false;
   bool _isLoadingAddresses = false;
+  bool _isLoadingProducts = false;
+  String? _productError;
   int _totalGallons = 1;
   int _exchangeCount = 0;
   int _newContainerCount = 1;
-  int _basePrice = 350;
-  int _priceWithExchange = 250;
   double? _currentLat;
   double? _currentLng;
+  List<_Product> _products = const [];
+  _Product? _selectedProduct;
   List<_SavedAddress> _savedAddresses = const [];
   _SavedAddress? _selectedAddress;
   String _deliveryTime = 'Morning';
   String _deliveryType = 'now';
+  String _paymentMethod = 'Cash';
+  bool _loadingPaymentSettings = true;
+  bool _paymentSettingsFailed = false;
+  bool _codEnabled = false;
+  bool _codVerification = false;
+  bool _gcashEnabled = false;
+  String _gcashNumber = '';
+  String _gcashAccountName = '';
+  XFile? _paymentReceipt;
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
 
@@ -40,7 +56,8 @@ class _OrderScreenState extends State<OrderScreen> {
     _refreshCurrentLocationPreview();
     loadAddresses();
     CustomerNavController.instance.addListener(_handleTabChange);
-    _loadPricingSettings();
+    _loadProducts();
+    _loadPaymentSettings();
   }
 
   @override
@@ -53,6 +70,243 @@ class _OrderScreenState extends State<OrderScreen> {
     if (!mounted) return;
     if (CustomerNavController.instance.index == 1) {
       loadAddresses(force: true);
+      _loadProducts(force: true);
+    }
+  }
+
+  bool get _requiresExchange => _selectedProduct?.exchangeRequired ?? false;
+
+  bool get _isGcashAvailable => _gcashEnabled;
+
+  bool get _isCodAvailable => _codEnabled;
+
+  bool get _hasAnyPaymentMethodAvailable => _codEnabled || _gcashEnabled;
+
+  int get _estimatedPrice {
+    final product = _selectedProduct;
+    if (product == null) return 0;
+
+    return (_exchangeCount * product.exchangePrice) +
+        (_newContainerCount * product.basePrice);
+  }
+
+  void _syncContainerCountsToQuantity() {
+    if (_requiresExchange) {
+      if (_exchangeCount > _totalGallons) {
+        _exchangeCount = _totalGallons;
+      }
+      _newContainerCount = _totalGallons - _exchangeCount;
+      return;
+    }
+
+    _exchangeCount = 0;
+    _newContainerCount = _totalGallons;
+  }
+
+  void _selectProduct(_Product product) {
+    setState(() {
+      _selectedProduct = product;
+      _syncContainerCountsToQuantity();
+    });
+  }
+
+  Future<void> _loadPaymentSettings() async {
+    if (!mounted) return;
+
+    setState(() {
+      _loadingPaymentSettings = true;
+      _paymentSettingsFailed = false;
+    });
+
+    try {
+      final client = Supabase.instance.client;
+
+      Future<Map<String, dynamic>?> fetchLatestRow() async {
+        for (final column in ['updated_at', 'created_at', 'id']) {
+          try {
+            final rows = await client
+                .from('system_settings')
+                .select(
+                  'cod_enabled,cod_verification,gcash_enabled,gcash_number,gcash_account_name',
+                )
+                .order(column, ascending: false)
+                .limit(1)
+                .timeout(const Duration(seconds: 8));
+
+            if (rows.isNotEmpty) {
+              return Map<String, dynamic>.from(rows.first);
+            }
+          } catch (e) {
+            debugPrint('system_settings fetch failed for $column: $e');
+          }
+        }
+
+        final rows = await client
+            .from('system_settings')
+            .select(
+              'cod_enabled,cod_verification,gcash_enabled,gcash_number,gcash_account_name',
+            )
+            .limit(1)
+            .timeout(const Duration(seconds: 8));
+
+        if (rows.isEmpty) return null;
+        return Map<String, dynamic>.from(rows.first);
+      }
+
+      final settings = await fetchLatestRow();
+
+      if (!mounted) return;
+
+      setState(() {
+        _codEnabled = _toBool(settings?['cod_enabled']);
+        _codVerification = _toBool(settings?['cod_verification']);
+        _gcashEnabled = _toBool(settings?['gcash_enabled']);
+        _gcashNumber = _toText(settings?['gcash_number']);
+        _gcashAccountName = _toText(settings?['gcash_account_name']);
+        _paymentSettingsFailed = false;
+        _syncPaymentMethodSelection();
+      });
+    } on SocketException catch (e) {
+      debugPrint('Failed to load payment settings: $e');
+      if (!mounted) return;
+      setState(() {
+        _codEnabled = false;
+        _codVerification = false;
+        _gcashEnabled = false;
+        _paymentSettingsFailed = true;
+        _syncPaymentMethodSelection();
+      });
+    } on TimeoutException catch (e) {
+      debugPrint('Payment settings timeout: $e');
+      if (!mounted) return;
+      setState(() {
+        _codEnabled = false;
+        _codVerification = false;
+        _gcashEnabled = false;
+        _paymentSettingsFailed = true;
+        _syncPaymentMethodSelection();
+      });
+    } catch (e) {
+      debugPrint('Failed to load payment settings: $e');
+      if (!mounted) return;
+      setState(() {
+        _codEnabled = false;
+        _codVerification = false;
+        _gcashEnabled = false;
+        _paymentSettingsFailed = true;
+        _syncPaymentMethodSelection();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingPaymentSettings = false;
+        });
+      }
+    }
+  }
+
+  void _syncPaymentMethodSelection() {
+    if (_codEnabled && _gcashEnabled) {
+      if (_paymentMethod != 'Cash' && _paymentMethod != 'GCash') {
+        _paymentMethod = 'Cash';
+      }
+      _paymentReceipt = null;
+      return;
+    }
+
+    if (_codEnabled) {
+      _paymentMethod = 'Cash';
+      _paymentReceipt = null;
+      return;
+    }
+
+    if (_gcashEnabled) {
+      _paymentMethod = 'GCash';
+      _paymentReceipt = null;
+      return;
+    }
+
+    _paymentMethod = '';
+    _paymentReceipt = null;
+  }
+
+  bool _isPaymentMethodEnabled(String paymentMethod) {
+    if (paymentMethod == 'Cash') return _isCodAvailable;
+    if (paymentMethod == 'GCash') return _isGcashAvailable;
+    return false;
+  }
+
+  Future<void> _loadProducts({bool force = false}) async {
+    if (_isLoadingProducts && !force) return;
+
+    setState(() {
+      _isLoadingProducts = true;
+      _productError = null;
+    });
+
+    try {
+      final rows = await Supabase.instance.client.from('products').select('*');
+      final productRows = List<Map<String, dynamic>>.from(
+        rows.whereType<Map>().map((row) => Map<String, dynamic>.from(row)),
+      );
+
+      final products = <_Product>[];
+      for (final row in productRows) {
+        final enabledValue = row['enabled'];
+        if (enabledValue is bool && !enabledValue) {
+          continue;
+        }
+        if (enabledValue is String) {
+          final normalized = enabledValue.trim().toLowerCase();
+          if (normalized == 'false' || normalized == '0' || normalized == 'no') {
+            continue;
+          }
+        }
+
+        final product = _Product.fromMap(row);
+        if (product.id.isEmpty) {
+          continue;
+        }
+        products.add(product);
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _products = products;
+
+        if (_products.isEmpty) {
+          _selectedProduct = null;
+          _productError = 'No available products found.';
+          _exchangeCount = 0;
+          _newContainerCount = _totalGallons;
+          return;
+        }
+
+        final selectedProductId = _selectedProduct?.id;
+        _selectedProduct = _products.firstWhere(
+          (product) => product.id == selectedProductId,
+          orElse: () => _products.first,
+        );
+        _syncContainerCountsToQuantity();
+      });
+    } catch (e, stackTrace) {
+      debugPrint('Failed to load products: $e');
+      debugPrint('Product loading stack trace: $stackTrace');
+      if (!mounted) return;
+      setState(() {
+        _products = const [];
+        _selectedProduct = null;
+        _productError = 'Unable to load products.';
+        _exchangeCount = 0;
+        _newContainerCount = _totalGallons;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingProducts = false;
+        });
+      }
     }
   }
 
@@ -157,61 +411,118 @@ class _OrderScreenState extends State<OrderScreen> {
     return null;
   }
 
-  int get _estimatedPrice =>
-      (_exchangeCount * _priceWithExchange) + (_newContainerCount * _basePrice);
-
-  int _toInt(dynamic value, {required int fallback}) {
-    if (value is int) return value;
-    if (value is double) return value.round();
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? fallback;
-    return fallback;
+  bool _toBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+    return false;
   }
 
-  Future<void> _loadPricingSettings() async {
-    try {
-      final settings = await Supabase.instance.client
-          .from('system_settings')
-          .select('base_price,price_with_exchange')
-          .limit(1)
-          .maybeSingle();
+  String _toText(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    return text;
+  }
 
-      if (settings == null || !mounted) {
-        return;
-      }
+  String? _normalizeReceiptExtension(String fileName) {
+    final normalizedFileName = fileName.trim().toLowerCase();
+    final lastDotIndex = normalizedFileName.lastIndexOf('.');
+    if (lastDotIndex == -1 || lastDotIndex == normalizedFileName.length - 1) {
+      return null;
+    }
 
-      final basePrice = _toInt(settings['base_price'], fallback: _basePrice);
-      final withExchangePrice = _toInt(
-        settings['price_with_exchange'],
-        fallback: _priceWithExchange,
-      );
-
-      setState(() {
-        _basePrice = basePrice;
-        _priceWithExchange = withExchangePrice;
-      });
-    } catch (e) {
-      debugPrint('Failed to load pricing settings: $e');
+    final extension = normalizedFileName.substring(lastDotIndex + 1);
+    switch (extension) {
+      case 'jpg':
+        return 'jpg';
+      case 'jpeg':
+        return 'jpeg';
+      case 'png':
+        return 'png';
+      case 'webp':
+        return 'webp';
+      default:
+        return null;
     }
   }
+
+  String? _inferReceiptExtensionFromBytes(List<int> bytes) {
+    if (bytes.length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+      return 'jpeg';
+    }
+
+    if (bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47 &&
+        bytes[4] == 0x0D &&
+        bytes[5] == 0x0A &&
+        bytes[6] == 0x1A &&
+        bytes[7] == 0x0A) {
+      return 'png';
+    }
+
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return 'webp';
+    }
+
+    return null;
+  }
+
+  String? _receiptContentTypeForExtension(String extension) {
+    switch (extension) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      default:
+        return null;
+    }
+  }
+
+  TimeOfDay _preferredTimeForSlot() {
+    switch (_deliveryTime) {
+      case 'Afternoon':
+        return const TimeOfDay(hour: 14, minute: 0);
+      case 'Evening':
+        return const TimeOfDay(hour: 18, minute: 0);
+      case 'Morning':
+      default:
+        return const TimeOfDay(hour: 9, minute: 0);
+    }
+  }
+
   void _decreaseTotalGallons() {
     if (_totalGallons <= 1) return;
     setState(() {
       _totalGallons--;
-      if (_exchangeCount > _totalGallons) _exchangeCount = _totalGallons;
-      _newContainerCount = _totalGallons - _exchangeCount;
+      _syncContainerCountsToQuantity();
     });
   }
 
   void _increaseTotalGallons() {
     setState(() {
       _totalGallons++;
-      _newContainerCount = _totalGallons - _exchangeCount;
+      _syncContainerCountsToQuantity();
     });
   }
 
   void _increaseExchange() {
-    if (_exchangeCount >= _totalGallons) return;
+    if (!_requiresExchange || _exchangeCount >= _totalGallons) return;
     setState(() {
       _exchangeCount++;
       _newContainerCount = _totalGallons - _exchangeCount;
@@ -219,7 +530,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _decreaseExchange() {
-    if (_exchangeCount <= 0) return;
+    if (!_requiresExchange || _exchangeCount <= 0) return;
     setState(() {
       _exchangeCount--;
       _newContainerCount = _totalGallons - _exchangeCount;
@@ -227,7 +538,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _increaseNewContainers() {
-    if (_newContainerCount >= _totalGallons) return;
+    if (!_requiresExchange || _newContainerCount >= _totalGallons) return;
     setState(() {
       _newContainerCount++;
       _exchangeCount = _totalGallons - _newContainerCount;
@@ -235,11 +546,55 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _decreaseNewContainers() {
-    if (_newContainerCount <= 0) return;
+    if (!_requiresExchange || _newContainerCount <= 0) return;
     setState(() {
       _newContainerCount--;
       _exchangeCount = _totalGallons - _newContainerCount;
     });
+  }
+
+  Future<void> _pickPaymentReceipt() async {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1600,
+        maxHeight: 1600,
+      );
+
+      if (!mounted || pickedFile == null) {
+        return;
+      }
+
+      setState(() {
+        _paymentReceipt = pickedFile;
+      });
+    } on PlatformException catch (e) {
+      debugPrint('Receipt picker failed: $e');
+      if (!mounted) return;
+
+      final message = e.code == 'photo_access_denied'
+          ? 'Photo access is denied. Please allow access in your device settings and try again.'
+          : 'Unable to select a payment receipt. Please try again.';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: const Color(0xFFDC2626),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Unexpected receipt picker error: $e');
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to upload the payment receipt right now.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+    }
   }
 
   Future<Position> _getCurrentLocation() async {
@@ -300,6 +655,54 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _submitOrder() async {
     if (_isSubmitting) return;
 
+    if (_selectedProduct == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a product first.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
+    if (!_isPaymentMethodEnabled(_paymentMethod)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No payment method is currently available. Please contact the administrator.',
+          ),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      if (_paymentMethod == 'GCash') {
+        setState(() {
+          _paymentMethod = 'Cash';
+          _paymentReceipt = null;
+        });
+      }
+      return;
+    }
+
+    if (_products.isEmpty || _productError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to load products. Please try again.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
+    if (_requiresExchange) {
+      if (_exchangeCount > _totalGallons) {
+        _exchangeCount = _totalGallons;
+      }
+      _newContainerCount = _totalGallons - _exchangeCount;
+    } else {
+      _exchangeCount = 0;
+      _newContainerCount = _totalGallons;
+    }
+
     if (_savedAddresses.isEmpty || _selectedAddress == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -332,6 +735,18 @@ class _OrderScreenState extends State<OrderScreen> {
         );
         return;
       }
+    }
+
+    final product = _selectedProduct!;
+
+    if (_paymentMethod == 'GCash' && _paymentReceipt == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please upload your GCash payment receipt before placing the order.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
     }
 
     setState(() {
@@ -382,19 +797,111 @@ class _OrderScreenState extends State<OrderScreen> {
         throw Exception('Please login first');
       }
 
+      String? receiptUrl;
+      if (_paymentMethod == 'GCash') {
+        final paymentReceipt = _paymentReceipt;
+        if (paymentReceipt == null) {
+          throw Exception('Please upload your GCash payment receipt before placing the order.');
+        }
+
+        try {
+          debugPrint('STARTING PAYMENT RECEIPT UPLOAD');
+          debugPrint('Receipt name: ${paymentReceipt.name}');
+          debugPrint('Receipt path: ${paymentReceipt.path}');
+          debugPrint('Bucket: payment-receipts');
+          debugPrint('Authenticated user ID: ${user.id}');
+
+          final bytes = await paymentReceipt.readAsBytes();
+          if (bytes.isEmpty) {
+            throw Exception('Receipt image is empty. Please choose another file.');
+          }
+
+          final receiptExtension =
+              _normalizeReceiptExtension(paymentReceipt.name) ??
+              _normalizeReceiptExtension(paymentReceipt.path) ??
+              _inferReceiptExtensionFromBytes(bytes);
+          if (receiptExtension == null) {
+            throw Exception(
+              'Unsupported receipt image format. Please upload a JPG, PNG, or WEBP image.',
+            );
+          }
+
+          final contentType = _receiptContentTypeForExtension(receiptExtension);
+          if (contentType == null) {
+            throw Exception(
+              'Unsupported receipt image format. Please upload a JPG, PNG, or WEBP image.',
+            );
+          }
+
+          final filePath = '${user.id}/receipt_${DateTime.now().millisecondsSinceEpoch}.$receiptExtension';
+
+          debugPrint('Storage path: $filePath');
+          debugPrint('Content type: $contentType');
+          debugPrint('File size: ${bytes.length} bytes');
+
+          await supabase.storage.from('payment-receipts').uploadBinary(
+            filePath,
+            bytes,
+            fileOptions: FileOptions(
+              upsert: false,
+              cacheControl: '3600',
+              contentType: contentType,
+            ),
+          );
+
+          receiptUrl = filePath;
+          debugPrint('PAYMENT RECEIPT UPLOAD SUCCESS');
+          debugPrint('Uploaded path: $filePath');
+        } catch (e, stackTrace) {
+          debugPrint('PAYMENT RECEIPT UPLOAD FAILED');
+          debugPrint('Error: $e');
+          debugPrint('Error type: ${e.runtimeType}');
+          debugPrint('Stack trace: $stackTrace');
+
+          final customerMessage = e.toString().replaceFirst('Exception: ', '');
+          if (customerMessage ==
+                  'Unsupported receipt image format. Please upload a JPG, PNG, or WEBP image.' ||
+              customerMessage == 'Receipt image is empty. Please choose another file.') {
+            rethrow;
+          }
+
+          throw Exception(
+            'Unable to upload your payment receipt. Please check your connection and try again.',
+          );
+        }
+      }
+
       final scheduledDate =
           _deliveryType == 'scheduled' && _selectedDate != null
           ? _selectedDate!.toIso8601String().split('T')[0]
           : null;
 
-      final scheduledTime =
-          _deliveryType == 'scheduled' && _selectedTime != null
-          ? '${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}'
-          : null;
+      final scheduledTimeToSave =
+          _deliveryType == 'scheduled'
+              ? (_selectedTime ?? _preferredTimeForSlot())
+              : null;
+      final scheduledTimeString = scheduledTimeToSave == null
+          ? null
+          : '${scheduledTimeToSave.hour.toString().padLeft(2, '0')}:${scheduledTimeToSave.minute.toString().padLeft(2, '0')}';
 
       final insertedOrder = await supabase
           .from('orders')
           .insert({
+            // Persist the selected product snapshot with every order so
+            // reports, receipts, and historical records remain accurate even if
+            // the admin later renames or edits the product.
+            'product_id': product.id,
+            'product_name': product.productName,
+            'capacity': product.capacity,
+            'base_price': product.basePrice,
+            'exchange_price': product.exchangePrice,
+            // `exchange_required` is saved below using the customer's
+            // actual selected exchange quantity, not the product setting.
+            // Save the selected payment method. GCash orders require
+            // the full order amount and an uploaded receipt for admin verification.
+            'payment_method': _paymentMethod,
+            'payment_status': 'Pending',
+            'receipt_url': _paymentMethod == 'GCash' ? receiptUrl : null,
             'customer_id': user.id,
             'customer_name':
                 (user.userMetadata?['full_name'] as String?)
@@ -412,9 +919,19 @@ class _OrderScreenState extends State<OrderScreen> {
             'longitude': lng,
             'gallons': _totalGallons,
             'total_price': _estimatedPrice,
+
+            // Save the customer's actual container choice.
+            // These values are different from the product's
+            // `exchange_required` setting, which only describes whether
+            // exchange is supported/available for the product.
+            'exchange_containers': _exchangeCount,
+            'new_containers': _newContainerCount,
+            'with_exchange': _exchangeCount > 0,
+            'exchange_required': _exchangeCount > 0,
+
             'delivery_type': _deliveryType,
             'scheduled_date': scheduledDate,
-            'scheduled_time': scheduledTime,
+            'scheduled_time': scheduledTimeString,
             'status': 'pending',
             'created_at': DateTime.now().toIso8601String(),
           })
@@ -477,18 +994,6 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  Future<void> _pickTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: _selectedTime ?? TimeOfDay.now(),
-    );
-
-    if (picked == null) return;
-    setState(() {
-      _selectedTime = picked;
-    });
-  }
-
   String _formatDate(DateTime date) {
     const months = [
       'January',
@@ -531,7 +1036,11 @@ class _OrderScreenState extends State<OrderScreen> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              '₱$_estimatedPrice est.',
+              _isLoadingProducts
+                  ? 'Loading...'
+                  : (_selectedProduct != null
+                      ? '₱$_estimatedPrice est.'
+                      : (_productError != null ? 'Unable to load products' : 'No product selected')),
               style: const TextStyle(
                 color: _primaryBlue,
                 fontWeight: FontWeight.w700,
@@ -552,13 +1061,74 @@ class _OrderScreenState extends State<OrderScreen> {
                 ),
                 children: [
                   _SectionCard(
-                    title: 'Total Gallons',
+                    title: 'Products',
+                    icon: Icons.inventory_2_outlined,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Choose a product for this order',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF94A3B8),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        if (_isLoadingProducts)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Text(
+                              'Loading available products...',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                          )
+                        else if (_productError != null)
+                          Text(
+                            _productError!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFDC2626),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          )
+                        else if (_products.isEmpty)
+                          const Text(
+                            'No available products found.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
+                            ),
+                          )
+                        else
+                          Column(
+                            children: _products
+                                .map(
+                                  (product) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _ProductTile(
+                                      product: product,
+                                      selected: _selectedProduct?.id == product.id,
+                                      onTap: () => _selectProduct(product),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _SectionCard(
+                    title: 'Quantity',
                     icon: Icons.water_drop_outlined,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Total number of gallons to order',
+                          'Total quantity to order',
                           style: TextStyle(
                             fontSize: 13,
                             color: Color(0xFF94A3B8),
@@ -574,43 +1144,49 @@ class _OrderScreenState extends State<OrderScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _SectionCard(
-                    title: 'Container Details',
-                    icon: Icons.inventory_2_outlined,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Specify exchange and new containers',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF94A3B8),
+                  if (_requiresExchange) ...[
+                    _SectionCard(
+                      title: 'Container Details',
+                      icon: Icons.inventory_2_outlined,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Specify exchange and new containers',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF94A3B8),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 14),
-                        _CounterGroupCard(
-                          title: 'With Exchange',
-                          priceBadge: '₱$_priceWithExchange each',
-                          badgeColor: const Color(0xFF1D4ED8),
-                          badgeBg: const Color(0xFFDBEAFE),
-                          value: _exchangeCount,
-                          onMinusTap: _decreaseExchange,
-                          onPlusTap: _increaseExchange,
-                        ),
-                        const SizedBox(height: 10),
-                        _CounterGroupCard(
-                          title: 'New Containers',
-                          priceBadge: '₱$_basePrice each',
-                          badgeColor: const Color(0xFFB45309),
-                          badgeBg: const Color(0xFFFEF3C7),
-                          value: _newContainerCount,
-                          onMinusTap: _decreaseNewContainers,
-                          onPlusTap: _increaseNewContainers,
-                        ),
-                      ],
+                          const SizedBox(height: 14),
+                          _CounterGroupCard(
+                            title: 'With Exchange',
+                            priceBadge: _selectedProduct == null
+                                ? 'Select product'
+                                : '₱${_selectedProduct!.exchangePrice} each',
+                            badgeColor: const Color(0xFF1D4ED8),
+                            badgeBg: const Color(0xFFDBEAFE),
+                            value: _exchangeCount,
+                            onMinusTap: _decreaseExchange,
+                            onPlusTap: _increaseExchange,
+                          ),
+                          const SizedBox(height: 10),
+                          _CounterGroupCard(
+                            title: 'New Containers',
+                            priceBadge: _selectedProduct == null
+                                ? 'Select product'
+                                : '₱${_selectedProduct!.basePrice} each',
+                            badgeColor: const Color(0xFFB45309),
+                            badgeBg: const Color(0xFFFEF3C7),
+                            value: _newContainerCount,
+                            onMinusTap: _decreaseNewContainers,
+                            onPlusTap: _increaseNewContainers,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
+                  ],
                   _SectionCard(
                     title: 'Delivery Address',
                     icon: Icons.location_on_outlined,
@@ -659,7 +1235,7 @@ class _OrderScreenState extends State<OrderScreen> {
                         else ...[
                           // Dropdown for address selection
                           DropdownButtonFormField<String>(
-                            value: _selectedAddress?.id,
+                            initialValue: _selectedAddress?.id,
                             decoration: InputDecoration(
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
@@ -849,6 +1425,7 @@ class _OrderScreenState extends State<OrderScreen> {
                                 onTap: () {
                                   setState(() {
                                     _deliveryType = 'now';
+                                    _selectedTime = null;
                                   });
                                 },
                               ),
@@ -858,6 +1435,7 @@ class _OrderScreenState extends State<OrderScreen> {
                                 onTap: () {
                                   setState(() {
                                     _deliveryType = 'scheduled';
+                                    _selectedTime ??= _preferredTimeForSlot();
                                   });
                                 },
                               ),
@@ -898,41 +1476,59 @@ class _OrderScreenState extends State<OrderScreen> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: _pickTime,
-                                  icon: const Icon(
-                                    Icons.access_time_outlined,
-                                    size: 16,
-                                  ),
-                                  label: Text(
-                                    _selectedTime == null
-                                        ? 'Select Time'
-                                        : _selectedTime!.format(context),
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: const Color(0xFF334155),
-                                    side: const BorderSide(
-                                      color: Color(0xFFE2E8F0),
-                                      width: 0.8,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    minimumSize: const Size(0, 44),
-                                  ),
-                                ),
-                              ),
                             ],
                           ),
-                          if (_selectedDate != null &&
-                              _selectedTime != null) ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: ['Morning', 'Afternoon', 'Evening'].map((slot) {
+                              final selected = _deliveryTime == slot;
+                              return Expanded(
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    right: slot != 'Evening' ? 8 : 0,
+                                  ),
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        _deliveryTime = slot;
+                                        _selectedTime = _preferredTimeForSlot();
+                                      });
+                                    },
+                                    child: AnimatedContainer(
+                                      duration: const Duration(milliseconds: 200),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 10,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: selected
+                                            ? _primaryBlue
+                                            : const Color(0xFFF1F5F9),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: selected
+                                              ? _primaryBlue
+                                              : const Color(0xFFE2E8F0),
+                                          width: 0.5,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        slot,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: selected
+                                              ? Colors.white
+                                              : const Color(0xFF475569),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                          if (_selectedDate != null) ...[
                             const SizedBox(height: 10),
                             Container(
                               width: double.infinity,
@@ -942,7 +1538,7 @@ class _OrderScreenState extends State<OrderScreen> {
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text(
-                                'Scheduled on ${_formatDate(_selectedDate!)} at ${_selectedTime!.format(context)}',
+                                'Scheduled on ${_formatDate(_selectedDate!)} at $_deliveryTime',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: Color(0xFF1D4ED8),
@@ -957,66 +1553,290 @@ class _OrderScreenState extends State<OrderScreen> {
                   ),
                   const SizedBox(height: 12),
                   _SectionCard(
-                    title: 'Delivery Time',
-                    icon: Icons.schedule_outlined,
+                    title: 'Payment Method',
+                    icon: Icons.payments_outlined,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Choose a preferred time slot',
+                          'Choose how you want to pay for this order',
                           style: TextStyle(
                             fontSize: 13,
                             color: Color(0xFF94A3B8),
                           ),
                         ),
                         const SizedBox(height: 12),
-                        Row(
-                          children: ['Morning', 'Afternoon', 'Evening'].map((
-                            slot,
-                          ) {
-                            final selected = _deliveryTime == slot;
-                            return Expanded(
-                              child: Padding(
-                                padding: EdgeInsets.only(
-                                  right: slot != 'Evening' ? 8 : 0,
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFFE2E8F0),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              if (_isCodAvailable)
+                                _PaymentMethodOption(
+                                  title: 'Cash on Delivery',
+                                  subtitle: 'Pay upon delivery.',
+                                  selected: _paymentMethod == 'Cash',
+                                  onTap: () {
+                                    if (_paymentMethod == 'Cash') {
+                                      return;
+                                    }
+                                    setState(() {
+                                      _paymentMethod = 'Cash';
+                                    });
+                                  },
                                 ),
-                                child: GestureDetector(
-                                  onTap: () =>
-                                      setState(() => _deliveryTime = slot),
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 200),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: selected
-                                          ? _primaryBlue
-                                          : const Color(0xFFF1F5F9),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: selected
-                                            ? _primaryBlue
-                                            : const Color(0xFFE2E8F0),
-                                        width: 0.5,
+                              if (_loadingPaymentSettings)
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 10,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
                                       ),
-                                    ),
-                                    child: Text(
-                                      slot,
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: selected
-                                            ? Colors.white
-                                            : const Color(0xFF475569),
+                                      SizedBox(width: 10),
+                                      Text(
+                                        'Loading payment settings...',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Color(0xFF64748B),
+                                        ),
                                       ),
+                                    ],
+                                  ),
+                                )
+                              else if (_isGcashAvailable)
+                                _PaymentMethodOption(
+                                  title: 'GCash',
+                                  subtitle: 'Pay using GCash.',
+                                  selected: _paymentMethod == 'GCash',
+                                  onTap: () {
+                                    if (_paymentMethod == 'GCash') {
+                                      return;
+                                    }
+                                    setState(() {
+                                      _paymentMethod = 'GCash';
+                                    });
+                                  },
+                                ),
+                              if (!_loadingPaymentSettings && !_hasAnyPaymentMethodAvailable)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 10,
+                                  ),
+                                  child: Text(
+                                    'No payment method is currently available. Please contact the administrator.',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFFDC2626),
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
-                              ),
-                            );
-                          }).toList(),
+                            ],
+                          ),
                         ),
+                        if (_paymentSettingsFailed) ...[
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Unable to load payment settings. Cash remains available.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFDC2626),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                        if (_codEnabled && _codVerification) ...[
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Cash on Delivery requires verification.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                        if (_paymentMethod == 'GCash' && _isGcashAvailable) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEFF6FF),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFFDBEAFE),
+                                width: 0.5,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'GCash Account Name',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _gcashAccountName.isEmpty ? 'Unavailable' : _gcashAccountName,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                const Text(
+                                  'GCash Number',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _gcashNumber.isEmpty ? 'Unavailable' : _gcashNumber,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                const Text(
+                                  'Amount to Pay',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '₱$_estimatedPrice',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFFE2E8F0),
+                                width: 0.5,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Upload Payment Receipt',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'After completing your GCash payment, upload the transaction receipt before placing your order.',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF475569),
+                                    height: 1.4,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                if (_paymentReceipt == null)
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed: _pickPaymentReceipt,
+                                      icon: const Icon(Icons.upload_file_outlined),
+                                      label: const Text('Upload Receipt'),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: const Color(0xFF2563EB),
+                                        side: const BorderSide(
+                                          color: Color(0xFFBFDBFE),
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        minimumSize: const Size(0, 46),
+                                      ),
+                                    ),
+                                  )
+                                else ...[
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFDCFCE7),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.check_circle_rounded,
+                                          color: Color(0xFF15803D),
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            _paymentReceipt!.name,
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: Color(0xFF166534),
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: TextButton.icon(
+                                      onPressed: _pickPaymentReceipt,
+                                      icon: const Icon(Icons.swap_horiz),
+                                      label: const Text('Change Receipt'),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -1027,7 +1847,17 @@ class _OrderScreenState extends State<OrderScreen> {
                     child: Column(
                       children: [
                         _SummaryRow(
-                          label: 'Total Gallons',
+                          label: 'Selected Product',
+                          value: _selectedProduct?.productName ?? 'No product selected',
+                        ),
+                        const _SummaryDivider(),
+                        _SummaryRow(
+                          label: 'Capacity',
+                          value: _selectedProduct?.capacity ?? 'No product selected',
+                        ),
+                        const _SummaryDivider(),
+                        _SummaryRow(
+                          label: 'Quantity',
                           value: '$_totalGallons',
                         ),
                         const _SummaryDivider(),
@@ -1047,14 +1877,30 @@ class _OrderScreenState extends State<OrderScreen> {
                               ? 'Deliver Now'
                               : 'Scheduled',
                         ),
+                        const _SummaryDivider(),
+                        _SummaryRow(
+                          label: 'Payment Method',
+                          value: _paymentMethod,
+                        ),
+                        const _SummaryDivider(),
+                        _SummaryRow(
+                          label: 'Order Total',
+                          value: '₱${_estimatedPrice.toStringAsFixed(0)}',
+                        ),
+                        const _SummaryDivider(),
+                        _SummaryRow(
+                          label: 'Preferred Time',
+                          value: _deliveryType == 'scheduled'
+                              ? _deliveryTime
+                              : 'Any time',
+                        ),
                         if (_deliveryType == 'scheduled' &&
                             _selectedDate != null &&
-                            _selectedTime != null) ...[
+                            _deliveryTime.isNotEmpty) ...[
                           const _SummaryDivider(),
                           _SummaryRow(
                             label: 'Scheduled For',
-                            value:
-                                '${_formatDate(_selectedDate!)} ${_selectedTime!.format(context)}',
+                            value: '${_formatDate(_selectedDate!)} $_deliveryTime',
                           ),
                         ],
                         const SizedBox(height: 10),
@@ -1450,6 +2296,235 @@ class _DeliveryTypeOption extends StatelessWidget {
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PaymentMethodOption extends StatelessWidget {
+  const _PaymentMethodOption({
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
+              size: 18,
+              color: selected
+                  ? const Color(0xFF2563EB)
+                  : const Color(0xFF94A3B8),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Product {
+  const _Product({
+    required this.id,
+    required this.productName,
+    required this.capacity,
+    required this.basePrice,
+    required this.exchangePrice,
+    required this.exchangeRequired,
+  });
+
+  final String id;
+  final String productName;
+  final String capacity;
+  final int basePrice;
+  final int exchangePrice;
+  final bool exchangeRequired;
+
+  factory _Product.fromMap(Map<String, dynamic> row) {
+    return _Product(
+      id: row['id']?.toString().trim() ?? '',
+      productName: row['product_name']?.toString().trim() ?? '',
+      capacity: row['capacity']?.toString().trim() ?? '',
+      basePrice: _parseInt(row['base_price']),
+      exchangePrice: _parseInt(row['exchange_price']),
+      exchangeRequired: _parseBool(row['exchange_required']),
+    );
+  }
+
+  static int _parseInt(dynamic value) {
+    if (value is int) return value;
+    if (value is double) return value.round();
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  static bool _parseBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+    return false;
+  }
+}
+
+class _ProductTile extends StatelessWidget {
+  const _ProductTile({
+    required this.product,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _Product product;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? const Color(0xFF2563EB) : const Color(0xFFE2E8F0),
+              width: selected ? 1.2 : 0.5,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.productName,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      product.capacity,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _ProductBadge(
+                          label: 'Base ₱${product.basePrice}',
+                          backgroundColor: const Color(0xFFDBEAFE),
+                          textColor: const Color(0xFF1D4ED8),
+                        ),
+                        _ProductBadge(
+                          label: product.exchangeRequired
+                              ? 'Exchange ₱${product.exchangePrice}'
+                              : 'Exchange not required',
+                          backgroundColor: product.exchangeRequired
+                              ? const Color(0xFFFEF3C7)
+                              : const Color(0xFFF1F5F9),
+                          textColor: product.exchangeRequired
+                              ? const Color(0xFFB45309)
+                              : const Color(0xFF64748B),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Icon(
+                selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                color: selected ? const Color(0xFF2563EB) : const Color(0xFF94A3B8),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductBadge extends StatelessWidget {
+  const _ProductBadge({
+    required this.label,
+    required this.backgroundColor,
+    required this.textColor,
+  });
+
+  final String label;
+  final Color backgroundColor;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: textColor,
         ),
       ),
     );

@@ -10,11 +10,153 @@ import 'driver_messages_screen.dart';
 import 'driver_orders_screen.dart';
 import 'driver_support_screen.dart';
 
-class DriverProfileScreen extends StatelessWidget {
+class DriverProfileScreen extends StatefulWidget {
   const DriverProfileScreen({super.key});
 
+  @override
+  State<DriverProfileScreen> createState() => _DriverProfileScreenState();
+}
+
+class _DriverProfileScreenState extends State<DriverProfileScreen> {
   static const Color _background = Color(0xFFF6F8FB);
   static const Color _primaryBlue = Color(0xFF2563EB);
+
+  late Future<_DriverProfileData> _profileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _profileFuture = _loadProfileData();
+  }
+
+  Future<_DriverProfileData> _loadProfileData() async {
+    final session = await DriverSession.load();
+    final authUser = Supabase.instance.client.auth.currentUser;
+
+    String name = session == null
+      ? (DriverSession.name?.trim() ?? '')
+      : session.name.trim();
+    String email = authUser?.email?.trim() ?? '';
+    String employeeId = session == null
+      ? (DriverSession.id?.trim() ?? '')
+      : session.id.trim();
+
+    if (employeeId.isNotEmpty) {
+      try {
+        final response = await Supabase.instance.client
+            .from('employees')
+            .select()
+            .eq('id', employeeId)
+            .maybeSingle();
+
+        if (response != null) {
+          final profileName = _firstNonEmptyString(
+            response['full_name'],
+            response['name'],
+            response['driver_name'],
+          );
+          final profileEmail = _firstNonEmptyString(
+            response['email'],
+            response['work_email'],
+          );
+          final profileEmployeeId = _firstNonEmptyString(
+            response['employee_id'],
+            response['id'],
+          );
+
+          if (profileName.isNotEmpty) {
+            name = profileName;
+          }
+          if (profileEmail.isNotEmpty) {
+            email = profileEmail;
+          }
+          if (profileEmployeeId.isNotEmpty) {
+            employeeId = profileEmployeeId;
+          }
+        }
+      } catch (error) {
+        debugPrint('Failed to load driver profile data: $error');
+      }
+    }
+
+    if (name.isEmpty) {
+      name = 'Driver';
+    }
+
+    final driverIds = <String>{};
+    if (session?.id.trim().isNotEmpty == true) {
+      driverIds.add(session!.id.trim());
+    }
+    if (DriverSession.id?.trim().isNotEmpty == true) {
+      driverIds.add(DriverSession.id!.trim());
+    }
+    if (authUser?.id.trim().isNotEmpty == true) {
+      driverIds.add(authUser!.id.trim());
+    }
+
+    var deliveriesToday = 0;
+    var totalCompleted = 0;
+
+    if (driverIds.isNotEmpty) {
+      try {
+        final supabase = Supabase.instance.client;
+        final today = DateTime.now().toIso8601String().split('T')[0];
+
+        final todayOrders = driverIds.length == 1
+            ? await supabase
+                .from('orders')
+                .select('status')
+                .eq('driver_id', driverIds.first)
+                .gte('created_at', today)
+            : await supabase
+                .from('orders')
+                .select('status')
+                .inFilter('driver_id', driverIds.toList(growable: false))
+                .gte('created_at', today);
+
+        deliveriesToday = List<Map<String, dynamic>>.from(todayOrders).length;
+
+        final completedOrders = driverIds.length == 1
+            ? await supabase
+                .from('orders')
+                .select('status')
+                .eq('driver_id', driverIds.first)
+            : await supabase
+                .from('orders')
+                .select('status')
+                .inFilter('driver_id', driverIds.toList(growable: false));
+
+        totalCompleted = List<Map<String, dynamic>>.from(completedOrders)
+            .where((row) {
+              final status = (row['status']?.toString().trim().toLowerCase() ?? '')
+                  .replaceAll(' ', '_');
+              return status == 'delivered' || status == 'completed';
+            })
+            .length;
+      } catch (error) {
+        debugPrint('Failed to load driver profile stats: $error');
+      }
+    }
+
+    return _DriverProfileData(
+      name: name,
+      email: email,
+      employeeId: employeeId.isEmpty ? 'Not available' : employeeId,
+      deliveriesToday: deliveriesToday,
+      totalCompleted: totalCompleted,
+    );
+  }
+
+  String _firstNonEmptyString(dynamic first, [dynamic second, dynamic third]) {
+    final values = [first, second, third];
+    for (final value in values) {
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty) {
+        return text;
+      }
+    }
+    return '';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,27 +176,43 @@ class DriverProfileScreen extends StatelessWidget {
         scrolledUnderElevation: 0,
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: const [
-                  _ProfileHeader(),
-                  SizedBox(height: 16),
-                  _DriverAvailabilityCard(),
-                  SizedBox(height: 16),
-                  _DriverInfoCard(),
-                  SizedBox(height: 16),
-                  _QuickStatsCard(),
-                  SizedBox(height: 16),
-                  _ActionsSection(),
-                  SizedBox(height: 16),
-                  _LogoutButton(),
-                ],
-              ),
-            ),
-          ],
+        child: FutureBuilder<_DriverProfileData>(
+          future: _profileFuture,
+          builder: (context, snapshot) {
+            final profile = snapshot.data ?? const _DriverProfileData(
+              name: 'Driver',
+              email: '',
+              employeeId: 'Not available',
+              deliveriesToday: 0,
+              totalCompleted: 0,
+            );
+
+            return Column(
+              children: [
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      _ProfileHeader(name: profile.name, email: profile.email),
+                      const SizedBox(height: 16),
+                      const _DriverAvailabilityCard(),
+                      const SizedBox(height: 16),
+                      _DriverInfoCard(employeeId: profile.employeeId),
+                      const SizedBox(height: 16),
+                      _QuickStatsCard(
+                        deliveriesToday: profile.deliveriesToday,
+                        totalCompleted: profile.totalCompleted,
+                      ),
+                      const SizedBox(height: 16),
+                      const _ActionsSection(),
+                      const SizedBox(height: 16),
+                      const _LogoutButton(),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -123,7 +281,10 @@ class DriverProfileScreen extends StatelessWidget {
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader();
+  const _ProfileHeader({required this.name, required this.email});
+
+  final String name;
+  final String email;
 
   @override
   Widget build(BuildContext context) {
@@ -140,9 +301,9 @@ class _ProfileHeader extends StatelessWidget {
           ),
         ],
       ),
-      child: const Column(
+      child: Column(
         children: [
-          CircleAvatar(
+          const CircleAvatar(
             radius: 34,
             backgroundColor: Color(0xFFEFF6FF),
             child: Icon(
@@ -153,8 +314,8 @@ class _ProfileHeader extends StatelessWidget {
           ),
           SizedBox(height: 14),
           Text(
-            'Driver John',
-            style: TextStyle(
+            name,
+            style: const TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w800,
               color: Color(0xFF0F172A),
@@ -162,12 +323,8 @@ class _ProfileHeader extends StatelessWidget {
           ),
           SizedBox(height: 4),
           Text(
-            'Delivery Driver',
-            style: TextStyle(
-              fontSize: 13,
-              color: Color(0xFF64748B),
-              fontWeight: FontWeight.w600,
-            ),
+            email.isNotEmpty ? email : 'Delivery Driver',
+            style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
           ),
         ],
       ),
@@ -176,38 +333,44 @@ class _ProfileHeader extends StatelessWidget {
 }
 
 class _DriverInfoCard extends StatelessWidget {
-  const _DriverInfoCard();
+  const _DriverInfoCard({required this.employeeId});
+
+  final String employeeId;
 
   @override
   Widget build(BuildContext context) {
     return _SectionCard(
-      child: Column(
-        children: const [
-          _InfoRow(label: 'Employee ID', value: 'EMP-001'),
-          SizedBox(height: 12),
-          _InfoRow(label: 'Assigned Area', value: 'Metro Manila'),
-          SizedBox(height: 12),
-          _StatusRow(status: 'Active'),
-        ],
-      ),
+      child: _InfoRow(label: 'Employee ID', value: employeeId),
     );
   }
 }
 
 class _QuickStatsCard extends StatelessWidget {
-  const _QuickStatsCard();
+  const _QuickStatsCard({
+    required this.deliveriesToday,
+    required this.totalCompleted,
+  });
+
+  final int deliveriesToday;
+  final int totalCompleted;
 
   @override
   Widget build(BuildContext context) {
     return _SectionCard(
       child: Row(
-        children: const [
+        children: [
           Expanded(
-            child: _StatBox(value: '5', label: 'Deliveries Today'),
+            child: _StatBox(
+              value: '$deliveriesToday',
+              label: 'Deliveries Today',
+            ),
           ),
-          SizedBox(width: 12),
+          const SizedBox(width: 12),
           Expanded(
-            child: _StatBox(value: '120', label: 'Total Completed'),
+            child: _StatBox(
+              value: '$totalCompleted',
+              label: 'Total Completed',
+            ),
           ),
         ],
       ),
@@ -543,49 +706,20 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
-class _StatusRow extends StatelessWidget {
-  const _StatusRow({required this.status});
+class _DriverProfileData {
+  const _DriverProfileData({
+    required this.name,
+    required this.email,
+    required this.employeeId,
+    required this.deliveriesToday,
+    required this.totalCompleted,
+  });
 
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    final isActive = status.toLowerCase() == 'active';
-    final background = isActive
-        ? const Color(0xFFDCFCE7)
-        : const Color(0xFFFEF3C7);
-    final color = isActive ? const Color(0xFF15803D) : const Color(0xFFB45309);
-
-    return Row(
-      children: [
-        const Expanded(
-          child: Text(
-            'Status',
-            style: TextStyle(
-              fontSize: 13,
-              color: Color(0xFF64748B),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            status,
-            style: TextStyle(
-              fontSize: 11,
-              color: color,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  final String name;
+  final String email;
+  final String employeeId;
+  final int deliveriesToday;
+  final int totalCompleted;
 }
 
 class _StatBox extends StatelessWidget {

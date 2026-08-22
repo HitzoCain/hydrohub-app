@@ -56,6 +56,13 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   late String _currentStatus;
   Map<String, dynamic>? _order;
 
+  final TextEditingController _returnedController =
+      TextEditingController(text: '0');
+  final TextEditingController _damagedController =
+      TextEditingController(text: '0');
+  final TextEditingController _missingController =
+      TextEditingController(text: '0');
+
   @override
   void initState() {
     super.initState();
@@ -66,6 +73,14 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
       _textOf(_order?['status'], fallback: widget.status),
     );
     _loadOrderDetails();
+  }
+
+  @override
+  void dispose() {
+    _returnedController.dispose();
+    _damagedController.dispose();
+    _missingController.dispose();
+    super.dispose();
   }
 
   String get _rawOrderId {
@@ -190,6 +205,26 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
       }
 
       final orderData = Map<String, dynamic>.from(response);
+
+      // Compatibility for older orders created before the customer app
+      // started saving the actual exchange/new-container counts.
+      // If the order says exchange was selected but has no count fields,
+      // treat the ordered quantity as exchange and zero as new containers.
+      // New orders always have the explicit fields, so their exact selection
+      // is preserved.
+      final totalGallons = _toInt(orderData['gallons'], fallback: widget.totalGallons);
+      final hasExchangeCount = orderData.containsKey('exchange_containers') &&
+          orderData['exchange_containers'] != null;
+      final hasNewContainerCount = orderData.containsKey('new_containers') &&
+          orderData['new_containers'] != null;
+
+      if (!hasExchangeCount && !hasNewContainerCount &&
+          _hasTrueValue(orderData['exchange_required']) && totalGallons > 0) {
+        orderData['exchange_containers'] = totalGallons;
+        orderData['new_containers'] = 0;
+        orderData['with_exchange'] = true;
+      }
+
       final extractedCoords = _extractCustomerCoordinates(orderData);
       final extractedLat = extractedCoords[0];
       final extractedLng = extractedCoords[1];
@@ -278,6 +313,15 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
         _currentStatus = _normalizeStatus(
           _textOf(_order?['status'], fallback: _currentStatus),
         );
+
+        if (_isExchangeOrder(orderData)) {
+          // Start the driver's actual return inputs at zero.
+          // The driver must account for every expected container as
+          // returned, damaged, or missing before completing the order.
+          _returnedController.text = '0';
+          _damagedController.text = '0';
+          _missingController.text = '0';
+        }
       });
     } catch (e) {
       debugPrint('Failed to load order details: $e');
@@ -319,41 +363,85 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
   int _resolvedExchangeContainers() {
     final total = _resolvedTotalGallons();
-    final hasExchangeRaw = _order?['with_exchange'];
-    if (hasExchangeRaw is bool && !hasExchangeRaw) {
-      return 0;
-    }
 
+    // The customer's selected quantity is the source of truth.
     final explicitExchange = _order?['exchange_containers'];
-    if (explicitExchange == null) {
+    if (explicitExchange != null) {
+      final exchange = _toInt(explicitExchange, fallback: 0);
+      if (exchange > 0) {
+        return exchange.clamp(0, total).toInt();
+      }
+
+      // Some older/newer records may contain `exchange_containers = 0`
+      // together with `with_exchange = true`. In that case the boolean
+      // explicitly says the customer selected exchange.
+      if (_toBool(_order?['with_exchange'])) {
+        return total;
+      }
+
       return 0;
     }
 
-    final exchange = _toInt(
-      explicitExchange,
-      fallback: 0,
-    );
-    if (exchange < 0) return 0;
-    if (exchange > total) return total;
-    return exchange;
+    // Compatibility with orders created before exchange_containers was saved.
+    final newContainers = _order?['new_containers'];
+    if (newContainers != null) {
+      final newQuantity = _toInt(newContainers, fallback: total);
+      final inferred = total - newQuantity;
+      return inferred.clamp(0, total).toInt();
+    }
+
+    // Compatibility with orders that only saved the customer's boolean.
+    if (_toBool(_order?['with_exchange'])) {
+      return total;
+    }
+
+    // Legacy orders used exchange_required as the actual selected exchange
+    // flag. Use it only as the final fallback when the newer fields are absent.
+    if (_hasTrueValue(_order?['exchange_required'])) {
+      return total;
+    }
+
+    return 0;
   }
 
   int _resolvedNewContainers() {
     final total = _resolvedTotalGallons();
+
     final explicit = _order?['new_containers'];
     if (explicit != null) {
-      final parsed = _toInt(explicit, fallback: total);
-      if (parsed < 0) return 0;
-      return parsed;
+      final parsed = _toInt(explicit, fallback: 0);
+      return parsed.clamp(0, total).toInt();
     }
 
-    final hasExchangeRaw = _order?['with_exchange'];
-    if (hasExchangeRaw is bool && !hasExchangeRaw) {
-      return total;
+    final exchange = _resolvedExchangeContainers();
+    return (total - exchange).clamp(0, total).toInt();
+  }
+
+  bool _toBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final text = value?.toString().trim().toLowerCase() ?? '';
+    return text == 'true' || text == '1' || text == 'yes';
+  }
+
+  bool _hasTrueValue(dynamic value) => _toBool(value);
+
+  String _resolvedTotalPayment() {
+    final totalPrice = _order?['total_price'];
+    if (totalPrice is num) {
+      return '₱${totalPrice.toStringAsFixed(0)}';
+    }
+    if (totalPrice is String) {
+      final parsed = num.tryParse(totalPrice);
+      if (parsed != null) {
+        return '₱${parsed.toStringAsFixed(0)}';
+      }
+      if (totalPrice.trim().isNotEmpty) {
+        return totalPrice.trim();
+      }
     }
 
-    final inferred = total - _resolvedExchangeContainers();
-    return inferred < 0 ? 0 : inferred;
+    return 'Not available';
   }
 
   LatLng _resolvedCustomerLocation() {
@@ -384,6 +472,87 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     }
     return _isValidLatLng(lat, lng);
   }
+
+  bool _isExchangeOrder([Map<String, dynamic>? source]) {
+    final order = source ?? _order ?? const <String, dynamic>{};
+    final total = _toInt(order['gallons'], fallback: widget.totalGallons);
+
+    final explicitExchange = order['exchange_containers'];
+    if (explicitExchange != null) {
+      final exchange = _toInt(explicitExchange, fallback: 0);
+      if (exchange > 0) return true;
+      if (_toBool(order['with_exchange'])) return total > 0;
+      return false;
+    }
+
+    final newContainers = order['new_containers'];
+    if (newContainers != null) {
+      final newQuantity = _toInt(newContainers, fallback: total);
+      return (total - newQuantity) > 0;
+    }
+
+    if (_toBool(order['with_exchange'])) return total > 0;
+
+    // Final compatibility fallback for legacy records.
+    if (_hasTrueValue(order['exchange_required'])) return total > 0;
+
+    if (source == null && _order == null) {
+      return widget.exchangeContainers > 0;
+    }
+
+    return false;
+  }
+
+  int _controllerValue(TextEditingController controller) {
+    final value = int.tryParse(controller.text.trim());
+    return value == null || value < 0 ? 0 : value;
+  }
+
+  int _expectedExchangeQuantity(
+    Map<String, dynamic> order, {
+    required int total,
+  }) {
+    // Primary source: the customer's actual exchange quantity.
+    final explicit = order['exchange_containers'];
+    if (explicit != null) {
+      final parsed = _toInt(explicit, fallback: 0);
+      if (parsed > 0) return parsed.clamp(0, total).toInt();
+      if (_toBool(order['with_exchange'])) return total;
+      return 0;
+    }
+
+    // Compatibility with orders that saved only the new-container quantity.
+    final newContainers = order['new_containers'];
+    if (newContainers != null) {
+      final newQty = _toInt(newContainers, fallback: total);
+      final inferred = total - newQty;
+      return inferred.clamp(0, total).toInt();
+    }
+
+    // Compatibility with orders that saved the customer's exchange boolean.
+    if (_toBool(order['with_exchange'])) return total;
+
+    // Legacy compatibility for the current database structure.
+    if (_hasTrueValue(order['exchange_required'])) return total;
+
+    if (order.isEmpty && widget.exchangeContainers > 0) {
+      return widget.exchangeContainers.clamp(0, total).toInt();
+    }
+
+    return 0;
+  }
+
+  int get _expectedReturnQuantity => _expectedExchangeQuantity(
+        _order ?? const <String, dynamic>{},
+        total: _resolvedTotalGallons(),
+      );
+
+  int get _returnedQuantity => _controllerValue(_returnedController);
+  int get _damagedQuantity => _controllerValue(_damagedController);
+  int get _missingQuantity => _controllerValue(_missingController);
+
+  int get _accountedQuantity =>
+      _returnedQuantity + _damagedQuantity + _missingQuantity;
 
   @override
   Widget build(BuildContext context) {
@@ -490,9 +659,20 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                       label: 'New Containers',
                       value: '${_resolvedNewContainers()}',
                     ),
+                    const SizedBox(height: 8),
+                    _InfoRow(
+                      label: 'Total Payment',
+                      value: _resolvedTotalPayment(),
+                      valueColor: const Color(0xFF16A34A),
+                    ),
                   ],
                 ),
               ),
+              if (_expectedReturnQuantity > 0 &&
+                  _currentStatus == 'in_progress') ...[
+                const SizedBox(height: 14),
+                _buildContainerReturnCard(),
+              ],
               const SizedBox(height: 14),
               _SectionCard(
                 child: Column(
@@ -581,7 +761,14 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton.icon(
-                  onPressed: () {},
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => const DriverMapScreen(),
+                      ),
+                    );
+                  },
                   icon: const Icon(Icons.navigation_outlined, size: 18),
                   label: const Text(
                     'Open in Maps',
@@ -737,7 +924,237 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     );
   }
 
+  Widget _buildContainerReturnCard() {
+    final expected = _expectedReturnQuantity;
+    final accounted = _accountedQuantity;
+    final remaining = expected - accounted;
+    final isComplete = remaining == 0;
+    final isOver = remaining < 0;
+
+    return _SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.inventory_2_outlined,
+                color: _primaryBlue,
+                size: 21,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Container Return',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '$accounted / $expected',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: _primaryBlue,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Enter what the customer actually returned. Damaged and missing containers must also be accounted for before delivery can be completed.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.45,
+              color: Color(0xFF64748B),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _InfoRow(
+            label: 'Expected Return',
+            value: '$expected containers',
+            valueColor: _primaryBlue,
+          ),
+          const SizedBox(height: 14),
+          _buildQuantityField(
+            label: 'Returned',
+            controller: _returnedController,
+            icon: Icons.replay_circle_filled_outlined,
+            color: _successGreen,
+          ),
+          const SizedBox(height: 10),
+          _buildQuantityField(
+            label: 'Damaged',
+            controller: _damagedController,
+            icon: Icons.warning_amber_rounded,
+            color: const Color(0xFFD97706),
+          ),
+          const SizedBox(height: 10),
+          _buildQuantityField(
+            label: 'Missing',
+            controller: _missingController,
+            icon: Icons.help_outline_rounded,
+            color: const Color(0xFFDC2626),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isComplete
+                  ? const Color(0xFFF0FDF4)
+                  : const Color(0xFFFFF7ED),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isComplete
+                    ? const Color(0xFFBBF7D0)
+                    : const Color(0xFFFED7AA),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isComplete
+                      ? Icons.check_circle_outline
+                      : Icons.info_outline,
+                  color: isComplete
+                      ? _successGreen
+                      : const Color(0xFFD97706),
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    isComplete
+                        ? 'All containers are accounted for. You can mark the delivery as delivered.'
+                        : isOver
+                            ? 'The quantities exceed the expected return. Please correct the values.'
+                            : '$remaining container(s) still need to be accounted for.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      fontWeight: FontWeight.w700,
+                      color: isComplete
+                          ? const Color(0xFF166534)
+                          : const Color(0xFF9A3412),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuantityField({
+    required String label,
+    required TextEditingController controller,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: color, size: 20),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF334155),
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 90,
+          child: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 11,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(
+                  color: Color(0xFFCBD5E1),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(
+                  color: Color(0xFFCBD5E1),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(
+                  color: _primaryBlue,
+                  width: 1.5,
+                ),
+              ),
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _handleCompleteDelivery() async {
+    // A return is required only when an actual exchange quantity exists.
+    final expectedReturn = _expectedReturnQuantity;
+
+    if (expectedReturn > 0) {
+      final accounted = _accountedQuantity;
+
+      if (accounted != expectedReturn) {
+        final remaining = expectedReturn - accounted;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              remaining > 0
+                  ? 'Please account for all $expectedReturn containers. $remaining container(s) still need to be marked as returned, damaged, or missing.'
+                  : 'The returned, damaged, and missing quantities cannot exceed $expectedReturn containers.',
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+    }
+
     final orderId = _rawOrderId;
     await _markDelivered(orderId);
   }
@@ -855,7 +1272,6 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     });
 
     try {
-      // Get driver ID
       final session = await DriverSession.load();
       final driverId = session?.id ?? DriverSession.id;
 
@@ -865,13 +1281,126 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
       final supabase = Supabase.instance.client;
 
-      // Update order status to 'delivered'
+      // Always reload the latest order from Supabase before completing it.
+      // The database order is the source of truth for the delivery quantity
+      // and exchange quantity.
+      final orderResponse = await supabase
+          .from('orders')
+          .select()
+          .eq('id', orderId)
+          .maybeSingle();
+
+      if (orderResponse == null) {
+        throw Exception('Order not found. Please refresh and try again.');
+      }
+
+      final freshOrder = Map<String, dynamic>.from(orderResponse);
+
+      // Only exchange_containers (or the compatible new_containers fallback)
+      // determines whether the customer must return containers.
+      final isExchange = _isExchangeOrder(freshOrder);
+
+      final gallons = _toInt(
+        freshOrder['gallons'],
+        fallback: widget.totalGallons,
+      );
+
+      if (gallons <= 0) {
+        throw Exception('Invalid gallon quantity for this order.');
+      }
+
+      // ---------------------------------------------------------------
+      // RECORD ACTUAL CONTAINER RETURN / CONDITION
+      // ---------------------------------------------------------------
+      // For exchange orders, the driver must account for every expected
+      // container as returned, damaged, or missing. We never assume that
+      // the full expected quantity was returned.
+      if (isExchange) {
+        final expectedReturn = _expectedExchangeQuantity(
+          freshOrder,
+          total: gallons,
+        );
+
+        final returned = _returnedQuantity;
+        final damaged = _damagedQuantity;
+        final missing = _missingQuantity;
+        final accounted = returned + damaged + missing;
+
+        if (expectedReturn <= 0) {
+          throw Exception(
+            'This exchange order has no expected container return quantity.',
+          );
+        }
+
+        if (accounted != expectedReturn) {
+          throw Exception(
+            'Container quantities must equal the expected return. Expected $expectedReturn, but $accounted was accounted for.',
+          );
+        }
+
+        final existingReturns = await supabase
+            .from('container_returns')
+            .select(
+              'id, returned_quantity, damaged_quantity, missing_quantity',
+            )
+            .eq('order_id', orderId);
+
+        int alreadyAccounted = 0;
+        for (final row in (existingReturns as List<dynamic>)) {
+          final record = Map<String, dynamic>.from(row as Map);
+          alreadyAccounted +=
+              _toInt(record['returned_quantity'], fallback: 0) +
+              _toInt(record['damaged_quantity'], fallback: 0) +
+              _toInt(record['missing_quantity'], fallback: 0);
+        }
+
+        // If a previous attempt already recorded the complete return, do not
+        // insert another record. This keeps the operation idempotent.
+        if (alreadyAccounted == expectedReturn) {
+          // Nothing else is inserted. The existing return record remains the
+          // permanent transaction-history record.
+        } else if (alreadyAccounted > 0) {
+          throw Exception(
+            'A partial container return is already recorded for this order. Please contact the station administrator before completing it again.',
+          );
+        } else {
+          final rawCapacity =
+              freshOrder['capacity']?.toString().trim().isNotEmpty == true
+                  ? freshOrder['capacity'].toString()
+                  : (freshOrder['product_name']?.toString() ?? '5 gallons');
+
+          final capacityText = rawCapacity.trim().toLowerCase();
+          final capacity = capacityText.contains('5')
+              ? '5 gallons'
+              : capacityText.contains('3')
+                  ? '3 gallons'
+                  : rawCapacity.trim();
+
+          await supabase.from('container_returns').insert({
+            'order_id': orderId,
+            'driver_id': driverId,
+            'customer_id': freshOrder['customer_id'],
+            'customer_name': freshOrder['customer_name'],
+            'capacity': capacity,
+            'expected_quantity': expectedReturn,
+            'returned_quantity': returned,
+            'damaged_quantity': damaged,
+            'missing_quantity': missing,
+            'notes':
+                'Exchange return recorded by driver before delivery completion.',
+          });
+        }
+      }
+
+      // ---------------------------------------------------------------
+      // COMPLETE THE ORDER
+      // ---------------------------------------------------------------
       await supabase
           .from('orders')
           .update({'status': 'delivered'})
           .eq('id', orderId);
 
-      // Update driver status to 'active' (available)
+      // Driver is available again after completing the delivery.
       await supabase
           .from('employees')
           .update({'status': 'active'})
@@ -881,15 +1410,31 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
       setState(() {
         _order = {
-          ...?_order,
+          ...freshOrder,
           'status': 'delivered',
         };
+        _currentStatus = 'delivered';
+        _isLoading = false;
       });
 
-      // Call the completion callback to refresh orders list
       widget.onOrderCompleted?.call();
 
-      // Navigate back to orders list
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isExchange
+                ? 'Delivery completed. Empty containers returned to inventory.'
+                : 'Delivery completed successfully.',
+          ),
+          backgroundColor: const Color(0xFF16A34A),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      // Give the success message a moment to appear before returning.
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+
+      if (!mounted) return;
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
@@ -902,7 +1447,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
         SnackBar(
           content: Text('Error completing delivery: $error'),
           backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
+          duration: const Duration(seconds: 4),
         ),
       );
     }

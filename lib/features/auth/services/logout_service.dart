@@ -6,6 +6,9 @@ import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/login_screen.dart';
 
 Future<void> logoutAndRedirectToLogin(BuildContext context) async {
+  final navigator = Navigator.of(context);
+  var canNavigate = false;
+
   try {
     await Supabase.instance.client.auth.signOut();
   } catch (error) {
@@ -14,13 +17,15 @@ Future<void> logoutAndRedirectToLogin(BuildContext context) async {
     await CustomerSession.clear();
     await DriverSession.clear();
 
-    if (!context.mounted) {
-      return;
-    }
-
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
-      (route) => false,
-    );
+    canNavigate = context.mounted;
   }
+
+  if (!canNavigate) {
+    return;
+  }
+
+  navigator.pushAndRemoveUntil(
+    MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
+    (route) => false,
+  );
 }

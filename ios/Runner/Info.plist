@@ -51,6 +51,8 @@
 	<string>This app needs access to your location to track deliveries in real-time.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>This app needs access to your location to track deliveries in real-time.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs access to your photo library so you can upload a payment receipt.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
