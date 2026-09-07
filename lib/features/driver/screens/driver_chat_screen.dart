@@ -14,7 +14,7 @@ class DriverChatScreen extends StatefulWidget {
 
     // Station Contact Center support
     this.isStationContactCenter = false,
-    this.stationName = 'Aqua in Lavada',
+    this.stationName = 'Aqua In Lavada',
   });
 
   final String customerName;

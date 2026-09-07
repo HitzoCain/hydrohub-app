@@ -613,7 +613,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 14),
                         const Text(
-                          'Aqua en Lavada',
+                          'Aqua In Lavada',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 24,

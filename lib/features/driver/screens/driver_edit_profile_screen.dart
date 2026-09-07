@@ -190,7 +190,7 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
               ),
               const SizedBox(height: 14),
               DropdownButtonFormField<DriverStatus>(
-                value: _selectedStatus,
+                initialValue: _selectedStatus,
                 borderRadius: BorderRadius.circular(12),
                 decoration: _inputDecoration(
                   label: 'Status',

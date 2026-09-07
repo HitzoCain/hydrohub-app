@@ -21,10 +21,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
   Timer? _orderRefreshTimer;
 
   Future<_DashboardOrdersData> _dashboardOrdersFuture = Future.value(
-    const _DashboardOrdersData(
-      activeOrders: [],
-      recentOrders: [],
-    ),
+    const _DashboardOrdersData(activeOrders: [], recentOrders: []),
   );
 
   bool _isRefreshing = false;
@@ -45,14 +42,11 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
     _reloadDashboardOrders();
 
     // Update greeting every minute
-    _greetingTimer = Timer.periodic(
-      const Duration(minutes: 1),
-      (_) {
-        if (mounted) {
-          setState(() {});
-        }
-      },
-    );
+    _greetingTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
 
     // ==========================================================
     // AUTO REFRESH ORDERS
@@ -71,14 +65,11 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
     //
     // without requiring the customer to manually refresh.
     //
-    _orderRefreshTimer = Timer.periodic(
-      const Duration(seconds: 15),
-      (_) {
-        if (mounted) {
-          _reloadDashboardOrders(showLoading: false);
-        }
-      },
-    );
+    _orderRefreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted) {
+        _reloadDashboardOrders(showLoading: false);
+      }
+    });
   }
 
   // ============================================================
@@ -127,9 +118,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
   // RELOAD DASHBOARD ORDERS
   // ============================================================
 
-  void _reloadDashboardOrders({
-    bool showLoading = false,
-  }) {
+  void _reloadDashboardOrders({bool showLoading = false}) {
     if (!mounted) return;
 
     setState(() {
@@ -149,10 +138,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
     final customerId = user?.id;
 
     if (customerId == null || customerId.trim().isEmpty) {
-      return const _DashboardOrdersData(
-        activeOrders: [],
-        recentOrders: [],
-      );
+      return const _DashboardOrdersData(activeOrders: [], recentOrders: []);
     }
 
     try {
@@ -164,15 +150,8 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
           .from('orders')
           .select()
           .eq('customer_id', customerId)
-          .not(
-            'status',
-            'in',
-            '(delivered,cancelled)',
-          )
-          .order(
-            'created_at',
-            ascending: false,
-          );
+          .not('status', 'in', '(delivered,cancelled)')
+          .order('created_at', ascending: false);
 
       // ========================================================
       // FETCH RECENT ORDERS
@@ -182,21 +161,20 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
           .from('orders')
           .select()
           .eq('customer_id', customerId)
-          .order(
-            'created_at',
-            ascending: false,
-          )
+          .order('created_at', ascending: false)
           .limit(10);
 
       // ========================================================
       // CONVERT RESULTS
       // ========================================================
 
-      final allActiveOrders =
-          List<Map<String, dynamic>>.from(activeOrdersResponse);
+      final allActiveOrders = List<Map<String, dynamic>>.from(
+        activeOrdersResponse,
+      );
 
-      final allRecentOrders =
-          List<Map<String, dynamic>>.from(recentOrdersResponse);
+      final allRecentOrders = List<Map<String, dynamic>>.from(
+        recentOrdersResponse,
+      );
 
       // ========================================================
       // REMOVE REJECTED PAYMENT ORDERS
@@ -233,31 +211,26 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
         return paymentStatus != 'rejected';
       }).toList();
 
-      final recentOrders = allRecentOrders.where((order) {
-        final paymentStatus = '${order['payment_status'] ?? ''}'
-            .trim()
-            .toLowerCase();
+      final recentOrders = allRecentOrders
+          .where((order) {
+            final paymentStatus = '${order['payment_status'] ?? ''}'
+                .trim()
+                .toLowerCase();
 
-        return paymentStatus != 'rejected';
-      }).take(5).toList();
+            return paymentStatus != 'rejected';
+          })
+          .take(5)
+          .toList();
 
       return _DashboardOrdersData(
         activeOrders: activeOrders,
         recentOrders: recentOrders,
       );
     } catch (error) {
-      debugPrint(
-        '========================================',
-      );
-      debugPrint(
-        'CUSTOMER HOME ORDER FETCH ERROR',
-      );
-      debugPrint(
-        'Error: $error',
-      );
-      debugPrint(
-        '========================================',
-      );
+      debugPrint('========================================');
+      debugPrint('CUSTOMER HOME ORDER FETCH ERROR');
+      debugPrint('Error: $error');
+      debugPrint('========================================');
 
       rethrow;
     } finally {
@@ -292,24 +265,6 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
         backgroundColor: _background,
         elevation: 0,
         scrolledUnderElevation: 0,
-
-        actions: [
-          IconButton(
-            icon: const Icon(
-              Icons.notifications_outlined,
-              color: Color(0xFF334155),
-            ),
-            onPressed: () {},
-          ),
-
-          const Padding(
-            padding: EdgeInsets.only(right: 12),
-            child: Icon(
-              Icons.settings_outlined,
-              color: Color(0xFF334155),
-            ),
-          ),
-        ],
       ),
 
       body: FutureBuilder<_DashboardOrdersData>(
@@ -317,17 +272,13 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
 
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
+            return const Center(child: CircularProgressIndicator());
           }
 
           if (snapshot.hasError) {
             return RefreshIndicator(
               onRefresh: () async {
-                _reloadDashboardOrders(
-                  showLoading: false,
-                );
+                _reloadDashboardOrders(showLoading: false);
 
                 try {
                   await _dashboardOrdersFuture;
@@ -341,9 +292,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
                   Center(
                     child: Text(
                       'Failed to load orders',
-                      style: TextStyle(
-                        color: Color(0xFF64748B),
-                      ),
+                      style: TextStyle(color: Color(0xFF64748B)),
                     ),
                   ),
                 ],
@@ -351,17 +300,13 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
             );
           }
 
-          final dashboardOrders = snapshot.data ??
-              const _DashboardOrdersData(
-                activeOrders: [],
-                recentOrders: [],
-              );
+          final dashboardOrders =
+              snapshot.data ??
+              const _DashboardOrdersData(activeOrders: [], recentOrders: []);
 
           return RefreshIndicator(
             onRefresh: () async {
-              _reloadDashboardOrders(
-                showLoading: false,
-              );
+              _reloadDashboardOrders(showLoading: false);
 
               try {
                 await _dashboardOrdersFuture;
@@ -390,15 +335,12 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
 
                     const SizedBox(height: 24),
 
-                    const _SectionHeader(
-                      title: 'Active Orders',
-                    ),
+                    const _SectionHeader(title: 'Active Orders'),
 
                     const SizedBox(height: 12),
 
                     _ActiveOrdersList(
-                      activeOrders:
-                          dashboardOrders.activeOrders,
+                      activeOrders: dashboardOrders.activeOrders,
                     ),
 
                     const SizedBox(height: 24),
@@ -412,8 +354,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
                     const SizedBox(height: 12),
 
                     _RecentOrdersList(
-                      recentOrders:
-                          dashboardOrders.recentOrders,
+                      recentOrders: dashboardOrders.recentOrders,
                     ),
 
                     const SizedBox(height: 16),
@@ -429,9 +370,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
                     child: SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                      ),
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   ),
               ],
@@ -480,29 +419,23 @@ class _GreetingSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final customerName =
-        (CustomerSession.name?.trim().isNotEmpty == true)
-            ? CustomerSession.name!.trim()
-            : 'Customer';
+    final customerName = (CustomerSession.name?.trim().isNotEmpty == true)
+        ? CustomerSession.name!.trim()
+        : 'Customer';
 
     return Container(
       padding: const EdgeInsets.all(12),
 
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [
-            Color(0xFFF8FBFF),
-            Color(0xFFEAF2FF),
-          ],
+          colors: [Color(0xFFF8FBFF), Color(0xFFEAF2FF)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
 
         borderRadius: BorderRadius.circular(16),
 
-        border: Border.all(
-          color: const Color(0xFFD7E5FF),
-        ),
+        border: Border.all(color: const Color(0xFFD7E5FF)),
 
         boxShadow: const [
           BoxShadow(
@@ -520,8 +453,7 @@ class _GreetingSection extends StatelessWidget {
             height: 42,
 
             decoration: BoxDecoration(
-              color: const Color(0xFF2563EB)
-                  .withValues(alpha: 0.12),
+              color: const Color(0xFF2563EB).withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
 
@@ -536,8 +468,7 @@ class _GreetingSection extends StatelessWidget {
 
           Expanded(
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
 
               children: [
                 Text(
@@ -558,10 +489,7 @@ class _GreetingSection extends StatelessWidget {
 
                 const Text(
                   'Your water orders and active deliveries in one place.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF64748B),
-                  ),
+                  style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
                 ),
               ],
             ),
@@ -577,9 +505,7 @@ class _GreetingSection extends StatelessWidget {
 // ================================================================
 
 class _OrderWaterCard extends StatelessWidget {
-  const _OrderWaterCard({
-    required this.onTap,
-  });
+  const _OrderWaterCard({required this.onTap});
 
   final VoidCallback onTap;
 
@@ -595,10 +521,7 @@ class _OrderWaterCard extends StatelessWidget {
         child: Ink(
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [
-                Color(0xFF2563EB),
-                Color(0xFF1D4ED8),
-              ],
+              colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -614,14 +537,10 @@ class _OrderWaterCard extends StatelessWidget {
             ],
           ),
 
-          padding: const EdgeInsets.symmetric(
-            horizontal: 20,
-            vertical: 20,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
 
           child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
 
             children: [
               const Text(
@@ -653,10 +572,8 @@ class _OrderWaterCard extends StatelessWidget {
                 ),
 
                 decoration: BoxDecoration(
-                  color: Colors.white
-                      .withValues(alpha: 0.18),
-                  borderRadius:
-                      BorderRadius.circular(10),
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(10),
                 ),
 
                 child: const Row(
@@ -703,17 +620,14 @@ class _OrderWaterCard extends StatelessWidget {
 // ================================================================
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-  });
+  const _SectionHeader({required this.title});
 
   final String title;
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment:
-          MainAxisAlignment.spaceBetween,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
 
       children: [
         Text(
@@ -731,8 +645,7 @@ class _SectionHeader extends StatelessWidget {
 
           style: TextStyle(
             fontSize: 13,
-            color:
-                Theme.of(context).colorScheme.primary,
+            color: Theme.of(context).colorScheme.primary,
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -746,9 +659,7 @@ class _SectionHeader extends StatelessWidget {
 // ================================================================
 
 class _ActiveOrdersList extends StatelessWidget {
-  const _ActiveOrdersList({
-    required this.activeOrders,
-  });
+  const _ActiveOrdersList({required this.activeOrders});
 
   final List<Map<String, dynamic>> activeOrders;
 
@@ -763,10 +674,7 @@ class _ActiveOrdersList extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: const Color(0xFFE2E8F0),
-            width: 0.5,
-          ),
+          border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
         ),
 
         child: const Text(
@@ -787,15 +695,10 @@ class _ActiveOrdersList extends StatelessWidget {
         scrollDirection: Axis.horizontal,
 
         children: [
-          for (int i = 0;
-              i < activeOrders.length;
-              i++) ...[
-            _ActiveOrderCard(
-              order: activeOrders[i],
-            ),
+          for (int i = 0; i < activeOrders.length; i++) ...[
+            _ActiveOrderCard(order: activeOrders[i]),
 
-            if (i != activeOrders.length - 1)
-              const SizedBox(width: 12),
+            if (i != activeOrders.length - 1) const SizedBox(width: 12),
           ],
         ],
       ),
@@ -808,16 +711,12 @@ class _ActiveOrdersList extends StatelessWidget {
 // ================================================================
 
 class _ActiveOrderCard extends StatelessWidget {
-  const _ActiveOrderCard({
-    required this.order,
-  });
+  const _ActiveOrderCard({required this.order});
 
   final Map<String, dynamic> order;
 
   String _status() {
-    return '${order['status'] ?? ''}'
-        .trim()
-        .toLowerCase();
+    return '${order['status'] ?? ''}'.trim().toLowerCase();
   }
 
   String _statusLabel() {
@@ -899,19 +798,16 @@ class _ActiveOrderCard extends StatelessWidget {
       return 'Order';
     }
 
-    final short =
-        id.length > 8 ? id.substring(0, 8) : id;
+    final short = id.length > 8 ? id.substring(0, 8) : id;
 
     return 'Order #$short';
   }
 
   @override
   Widget build(BuildContext context) {
-    final gallons =
-        order['gallons']?.toString() ?? '0';
+    final gallons = order['gallons']?.toString() ?? '0';
 
-    final address =
-        '${order['address'] ?? 'No address'}';
+    final address = '${order['address'] ?? 'No address'}';
 
     return Container(
       width: 160,
@@ -923,10 +819,7 @@ class _ActiveOrderCard extends StatelessWidget {
 
         borderRadius: BorderRadius.circular(16),
 
-        border: Border.all(
-          color: const Color(0xFFE2E8F0),
-          width: 0.5,
-        ),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
 
         boxShadow: const [
           BoxShadow(
@@ -938,8 +831,7 @@ class _ActiveOrderCard extends StatelessWidget {
       ),
 
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
           Text(
@@ -957,15 +849,11 @@ class _ActiveOrderCard extends StatelessWidget {
           const SizedBox(height: 6),
 
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 8,
-              vertical: 3,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
 
             decoration: BoxDecoration(
               color: _badgeBg(),
-              borderRadius:
-                  BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(20),
             ),
 
             child: Text(
@@ -998,10 +886,7 @@ class _ActiveOrderCard extends StatelessWidget {
           Text(
             address,
 
-            style: const TextStyle(
-              fontSize: 11,
-              color: Color(0xFF64748B),
-            ),
+            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
 
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -1017,44 +902,29 @@ class _ActiveOrderCard extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute<void>(
-                    builder: (_) =>
-                        CustomerTrackOrderScreen(
-                      order: order,
-                    ),
+                    builder: (_) => CustomerTrackOrderScreen(order: order),
                   ),
                 );
               },
 
               style: OutlinedButton.styleFrom(
-                foregroundColor:
-                    const Color(0xFF2563EB),
+                foregroundColor: const Color(0xFF2563EB),
 
-                side: const BorderSide(
-                  color: Color(0xFFBFDBFE),
-                  width: 0.5,
-                ),
+                side: const BorderSide(color: Color(0xFFBFDBFE), width: 0.5),
 
-                backgroundColor:
-                    const Color(0xFFF1F5F9),
+                backgroundColor: const Color(0xFFF1F5F9),
 
                 shape: RoundedRectangleBorder(
-                  borderRadius:
-                      BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(10),
                 ),
 
-                padding:
-                    const EdgeInsets.symmetric(
-                  vertical: 8,
-                ),
+                padding: const EdgeInsets.symmetric(vertical: 8),
               ),
 
               child: const Text(
                 'Track →',
 
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ),
           ),
@@ -1069,9 +939,7 @@ class _ActiveOrderCard extends StatelessWidget {
 // ================================================================
 
 class _RecentOrdersList extends StatelessWidget {
-  const _RecentOrdersList({
-    required this.recentOrders,
-  });
+  const _RecentOrdersList({required this.recentOrders});
 
   final List<Map<String, dynamic>> recentOrders;
 
@@ -1087,10 +955,7 @@ class _RecentOrdersList extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
 
-          border: Border.all(
-            color: const Color(0xFFE2E8F0),
-            width: 0.5,
-          ),
+          border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
         ),
 
         child: const Text(
@@ -1106,15 +971,10 @@ class _RecentOrdersList extends StatelessWidget {
 
     return Column(
       children: [
-        for (int i = 0;
-            i < recentOrders.length;
-            i++) ...[
-          _RecentOrderTile(
-            order: recentOrders[i],
-          ),
+        for (int i = 0; i < recentOrders.length; i++) ...[
+          _RecentOrderTile(order: recentOrders[i]),
 
-          if (i != recentOrders.length - 1)
-            const SizedBox(height: 8),
+          if (i != recentOrders.length - 1) const SizedBox(height: 8),
         ],
       ],
     );
@@ -1126,17 +986,14 @@ class _RecentOrdersList extends StatelessWidget {
 // ================================================================
 
 class _RecentOrdersHeader extends StatelessWidget {
-  const _RecentOrdersHeader({
-    required this.onSeeAllTap,
-  });
+  const _RecentOrdersHeader({required this.onSeeAllTap});
 
   final VoidCallback onSeeAllTap;
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment:
-          MainAxisAlignment.spaceBetween,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
 
       children: [
         const Text(
@@ -1157,8 +1014,7 @@ class _RecentOrdersHeader extends StatelessWidget {
 
             style: TextStyle(
               fontSize: 13,
-              color:
-                  Theme.of(context).colorScheme.primary,
+              color: Theme.of(context).colorScheme.primary,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -1173,9 +1029,7 @@ class _RecentOrdersHeader extends StatelessWidget {
 // ================================================================
 
 class _RecentOrderTile extends StatelessWidget {
-  const _RecentOrderTile({
-    required this.order,
-  });
+  const _RecentOrderTile({required this.order});
 
   final Map<String, dynamic> order;
 
@@ -1186,8 +1040,7 @@ class _RecentOrderTile extends StatelessWidget {
       return 'Order';
     }
 
-    final short =
-        id.length > 8 ? id.substring(0, 8) : id;
+    final short = id.length > 8 ? id.substring(0, 8) : id;
 
     return 'Order #$short';
   }
@@ -1203,11 +1056,9 @@ class _RecentOrderTile extends StatelessWidget {
   }
 
   String _dateLabel() {
-    final createdAt =
-        '${order['created_at'] ?? ''}';
+    final createdAt = '${order['created_at'] ?? ''}';
 
-    final parsed =
-        DateTime.tryParse(createdAt);
+    final parsed = DateTime.tryParse(createdAt);
 
     if (parsed == null) {
       return 'Unknown date';
@@ -1217,9 +1068,7 @@ class _RecentOrderTile extends StatelessWidget {
   }
 
   String _status() {
-    return '${order['status'] ?? ''}'
-        .trim()
-        .toLowerCase();
+    return '${order['status'] ?? ''}'.trim().toLowerCase();
   }
 
   String _statusLabel() {
@@ -1334,13 +1183,9 @@ class _RecentOrderTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
 
-        borderRadius:
-            BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(14),
 
-        border: Border.all(
-          color: const Color(0xFFF1F5F9),
-          width: 0.5,
-        ),
+        border: Border.all(color: const Color(0xFFF1F5F9), width: 0.5),
 
         boxShadow: const [
           BoxShadow(
@@ -1352,11 +1197,7 @@ class _RecentOrderTile extends StatelessWidget {
       ),
 
       child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 4,
-        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
 
         leading: Container(
           width: 40,
@@ -1364,8 +1205,7 @@ class _RecentOrderTile extends StatelessWidget {
 
           decoration: BoxDecoration(
             color: const Color(0xFFEFF6FF),
-            borderRadius:
-                BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(10),
           ),
 
           child: const Icon(
@@ -1378,27 +1218,19 @@ class _RecentOrderTile extends StatelessWidget {
         title: Text(
           _orderLabel(),
 
-          style: const TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
-          ),
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
         ),
 
         subtitle: Text(
           _dateLabel(),
 
-          style: const TextStyle(
-            color: Color(0xFF94A3B8),
-            fontSize: 12,
-          ),
+          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
         ),
 
         trailing: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.center,
 
-          crossAxisAlignment:
-              CrossAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.end,
 
           children: [
             Text(
@@ -1414,16 +1246,11 @@ class _RecentOrderTile extends StatelessWidget {
             const SizedBox(height: 3),
 
             Container(
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 7,
-                vertical: 2,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
 
               decoration: BoxDecoration(
                 color: _statusBgColor(),
-                borderRadius:
-                    BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(20),
               ),
 
               child: Text(

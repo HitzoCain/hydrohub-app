@@ -4,6 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
+import '../../../models/philippine_location.dart';
+import '../../../utils/address_formatter.dart';
+import '../../../widgets/address/cascading_address_form.dart';
 
 class CustomerSignupScreen extends StatefulWidget {
   const CustomerSignupScreen({super.key});
@@ -28,6 +31,7 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
   bool _acceptedTerms = false;
   bool _acceptedPrivacy = false;
   String _loadingMessage = 'Please wait...';
+  AddressFormData? _structuredAddress;
 
   @override
   void dispose() {
@@ -367,6 +371,13 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
       return;
     }
 
+    if (_structuredAddress == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please complete your delivery address')),
+      );
+      return;
+    }
+
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) {
       return;
@@ -508,7 +519,7 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
                         ),
                         const SizedBox(height: 14),
                         const Text(
-                          'Aqua en Lavada',
+                          'Aqua In Lavada',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 24,
@@ -648,18 +659,37 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
                           validator: _validatePhone,
                         ),
                         const SizedBox(height: 12),
-                        TextFormField(
-                          controller: _addressController,
-                          maxLines: 2,
-                          textInputAction: TextInputAction.done,
-                          decoration: _inputDecoration(
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
                             'Delivery Address',
-                            icon: Icons.location_on_outlined,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF475569),
+                            ),
                           ),
-                          validator: (value) => _validateRequired(
-                            value,
-                            'Delivery address is required',
-                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        CascadingAddressForm(
+                          showMapPicker: false,
+                          onPickLocation: () async => null,
+                          onSave: (data, _) async {
+                            final formatted = formatAddressParts(
+                              region: data.region.name,
+                              province: data.province.name,
+                              cityMunicipality: data.cityMunicipality.name,
+                              barangay: data.barangay.name,
+                              street: data.street,
+                              houseNumber: data.houseNumber,
+                              landmark: data.landmark,
+                            );
+                            if (!mounted) return;
+                            setState(() {
+                              _structuredAddress = data;
+                              _addressController.text = formatted;
+                            });
+                          },
                         ),
                         const SizedBox(height: 6),
                         Padding(

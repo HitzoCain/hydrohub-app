@@ -30,6 +30,8 @@ class _OrderScreenState extends State<OrderScreen> {
   int _totalGallons = 1;
   int _exchangeCount = 0;
   int _newContainerCount = 1;
+  int _borrowCount = 0;
+  int _maximumBorrowContainers = 10;
   double? _currentLat;
   double? _currentLng;
   List<_Product> _products = const [];
@@ -50,6 +52,12 @@ class _OrderScreenState extends State<OrderScreen> {
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
 
+  final TextEditingController _exchangeController = TextEditingController(text: '0');
+  final TextEditingController _newController = TextEditingController(text: '1');
+  final TextEditingController _borrowController = TextEditingController(text: '0');
+  bool _borrowEnabled = true;
+  String? _containerAllocationError;
+
   @override
   void initState() {
     super.initState();
@@ -57,12 +65,16 @@ class _OrderScreenState extends State<OrderScreen> {
     loadAddresses();
     CustomerNavController.instance.addListener(_handleTabChange);
     _loadProducts();
+    _loadBorrowSettings();
     _loadPaymentSettings();
   }
 
   @override
   void dispose() {
     CustomerNavController.instance.removeListener(_handleTabChange);
+    _exchangeController.dispose();
+    _newController.dispose();
+    _borrowController.dispose();
     super.dispose();
   }
 
@@ -87,27 +99,138 @@ class _OrderScreenState extends State<OrderScreen> {
     if (product == null) return 0;
 
     return (_exchangeCount * product.exchangePrice) +
-        (_newContainerCount * product.basePrice);
+        (_newContainerCount * product.basePrice) +
+        (_borrowCount * product.basePrice);
   }
 
-  void _syncContainerCountsToQuantity() {
-    if (_requiresExchange) {
-      if (_exchangeCount > _totalGallons) {
-        _exchangeCount = _totalGallons;
-      }
-      _newContainerCount = _totalGallons - _exchangeCount;
-      return;
-    }
+  void _syncAllocationControllers() {
+    _exchangeController.text = '$_exchangeCount';
+    _newController.text = '$_newContainerCount';
+    _borrowController.text = '$_borrowCount';
+  }
 
-    _exchangeCount = 0;
-    _newContainerCount = _totalGallons;
+  int _parseQuantity(String value) {
+    final parsed = int.tryParse(value.trim()) ?? 0;
+    return parsed < 0 ? 0 : parsed;
+  }
+
+  void _recalculateContainerTotal() {
+    final exchange = _parseQuantity(_exchangeController.text);
+    final newContainers = _parseQuantity(_newController.text);
+    final borrow = _parseQuantity(_borrowController.text);
+
+    setState(() {
+      _exchangeCount = _requiresExchange ? exchange : 0;
+      _newContainerCount = newContainers;
+      _borrowCount = borrow;
+      _totalGallons = _exchangeCount + _newContainerCount + _borrowCount;
+
+      if (_borrowCount > _maximumBorrowContainers) {
+        _containerAllocationError =
+            'Borrow containers cannot exceed $_maximumBorrowContainers.';
+      } else if (!_requiresExchange && exchange > 0) {
+        _containerAllocationError =
+            'Exchange is not available for the selected product.';
+      } else if (!_borrowEnabled && borrow > 0) {
+        _containerAllocationError = 'Borrowing is currently unavailable.';
+      } else {
+        _containerAllocationError = null;
+      }
+    });
+  }
+
+  void _onExchangeChanged(String value) {
+    final quantity = _parseQuantity(value);
+    if (!_requiresExchange && quantity > 0) {
+      _exchangeController.text = '0';
+      _exchangeController.selection =
+          TextSelection.collapsed(offset: _exchangeController.text.length);
+    }
+    _recalculateContainerTotal();
+  }
+
+  void _onNewChanged(String value) {
+    _recalculateContainerTotal();
+  }
+
+  void _onBorrowChanged(String value) {
+    final quantity = _parseQuantity(value);
+    if (quantity > _maximumBorrowContainers) {
+      _borrowController.text = '$_maximumBorrowContainers';
+      _borrowController.selection =
+          TextSelection.collapsed(offset: _borrowController.text.length);
+    }
+    _recalculateContainerTotal();
   }
 
   void _selectProduct(_Product product) {
     setState(() {
       _selectedProduct = product;
-      _syncContainerCountsToQuantity();
+      if (!product.exchangeRequired) {
+        _exchangeCount = 0;
+        _exchangeController.text = '0';
+      }
+      _totalGallons = _exchangeCount + _newContainerCount + _borrowCount;
+      _containerAllocationError = null;
     });
+  }
+
+  Future<void> _loadBorrowSettings() async {
+    if (!mounted) return;
+
+    setState(() {
+    });
+
+    try {
+      final client = Supabase.instance.client;
+      final rows = await client
+          .from('container_borrow_settings')
+          .select('enabled,maximum_per_customer')
+          .limit(1);
+
+      var maximum = 10;
+      var enabled = true;
+
+      if (rows.isNotEmpty) {
+        final row = Map<String, dynamic>.from(rows.first);
+        enabled = _toBool(row['enabled']);
+
+        final value = row['maximum_per_customer'];
+        if (value is num) {
+          maximum = value.toInt();
+        } else if (value is String) {
+          maximum = int.tryParse(value) ?? 10;
+        }
+      }
+
+      maximum = maximum.clamp(1, 100).toInt();
+
+      if (!mounted) return;
+
+      setState(() {
+        _borrowEnabled = enabled;
+        _maximumBorrowContainers = maximum;
+
+        if (!_borrowEnabled) {
+          _borrowCount = 0;
+          _borrowController.text = '0';
+        } else if (_borrowCount > maximum) {
+          _borrowCount = maximum;
+          _borrowController.text = '$maximum';
+        }
+
+        _totalGallons = _exchangeCount + _newContainerCount + _borrowCount;
+      });
+    } catch (e) {
+      debugPrint('Failed to load borrow settings; using default limit of 10: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _borrowEnabled = true;
+        _maximumBorrowContainers = 10;
+      });
+    }
   }
 
   Future<void> _loadPaymentSettings() async {
@@ -279,7 +402,10 @@ class _OrderScreenState extends State<OrderScreen> {
           _selectedProduct = null;
           _productError = 'No available products found.';
           _exchangeCount = 0;
-          _newContainerCount = _totalGallons;
+          _newContainerCount = 0;
+          _borrowCount = 0;
+          _syncAllocationControllers();
+          _totalGallons = 0;
           return;
         }
 
@@ -288,7 +414,8 @@ class _OrderScreenState extends State<OrderScreen> {
           (product) => product.id == selectedProductId,
           orElse: () => _products.first,
         );
-        _syncContainerCountsToQuantity();
+        _totalGallons = _exchangeCount + _newContainerCount + _borrowCount;
+        _syncAllocationControllers();
       });
     } catch (e, stackTrace) {
       debugPrint('Failed to load products: $e');
@@ -299,7 +426,10 @@ class _OrderScreenState extends State<OrderScreen> {
         _selectedProduct = null;
         _productError = 'Unable to load products.';
         _exchangeCount = 0;
-        _newContainerCount = _totalGallons;
+        _newContainerCount = _totalGallons > 0 ? _totalGallons : 1;
+        _borrowCount = 0;
+        _syncAllocationControllers();
+        _totalGallons = _newContainerCount;
       });
     } finally {
       if (mounted) {
@@ -506,53 +636,6 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  void _decreaseTotalGallons() {
-    if (_totalGallons <= 1) return;
-    setState(() {
-      _totalGallons--;
-      _syncContainerCountsToQuantity();
-    });
-  }
-
-  void _increaseTotalGallons() {
-    setState(() {
-      _totalGallons++;
-      _syncContainerCountsToQuantity();
-    });
-  }
-
-  void _increaseExchange() {
-    if (!_requiresExchange || _exchangeCount >= _totalGallons) return;
-    setState(() {
-      _exchangeCount++;
-      _newContainerCount = _totalGallons - _exchangeCount;
-    });
-  }
-
-  void _decreaseExchange() {
-    if (!_requiresExchange || _exchangeCount <= 0) return;
-    setState(() {
-      _exchangeCount--;
-      _newContainerCount = _totalGallons - _exchangeCount;
-    });
-  }
-
-  void _increaseNewContainers() {
-    if (!_requiresExchange || _newContainerCount >= _totalGallons) return;
-    setState(() {
-      _newContainerCount++;
-      _exchangeCount = _totalGallons - _newContainerCount;
-    });
-  }
-
-  void _decreaseNewContainers() {
-    if (!_requiresExchange || _newContainerCount <= 0) return;
-    setState(() {
-      _newContainerCount--;
-      _exchangeCount = _totalGallons - _newContainerCount;
-    });
-  }
-
   Future<void> _pickPaymentReceipt() async {
     try {
       final picker = ImagePicker();
@@ -693,15 +776,59 @@ class _OrderScreenState extends State<OrderScreen> {
       return;
     }
 
-    if (_requiresExchange) {
-      if (_exchangeCount > _totalGallons) {
-        _exchangeCount = _totalGallons;
-      }
-      _newContainerCount = _totalGallons - _exchangeCount;
-    } else {
-      _exchangeCount = 0;
-      _newContainerCount = _totalGallons;
+    // Validate the customer's container allocation.
+    final exchange = _parseQuantity(_exchangeController.text);
+    final newContainers = _parseQuantity(_newController.text);
+    final borrow = _parseQuantity(_borrowController.text);
+
+    if (exchange > 0 && !_requiresExchange) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Exchange is not available for the selected product.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
     }
+
+    if (borrow > 0 && !_borrowEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Borrowing is currently unavailable.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
+    if (borrow > _maximumBorrowContainers) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Borrow quantity cannot exceed $_maximumBorrowContainers containers.'),
+          backgroundColor: const Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
+    final totalContainers = exchange + newContainers + borrow;
+    if (totalContainers < 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter at least 1 container.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _exchangeCount = exchange;
+      _newContainerCount = newContainers;
+      _borrowCount = borrow;
+      _totalGallons = totalContainers;
+      _containerAllocationError = null;
+    });
 
     if (_savedAddresses.isEmpty || _selectedAddress == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -884,6 +1011,56 @@ class _OrderScreenState extends State<OrderScreen> {
           ? null
           : '${scheduledTimeToSave.hour.toString().padLeft(2, '0')}:${scheduledTimeToSave.minute.toString().padLeft(2, '0')}';
 
+      var activeOrderLimit = 3;
+      try {
+        final settings = await supabase
+            .from('system_settings')
+            .select('max_active_orders_per_customer')
+            .limit(1)
+            .maybeSingle();
+        final configuredLimit = settings?['max_active_orders_per_customer'];
+        if (configuredLimit is int && configuredLimit > 0) {
+          activeOrderLimit = configuredLimit;
+        } else if (configuredLimit is num && configuredLimit > 0) {
+          activeOrderLimit = configuredLimit.toInt();
+        }
+      } catch (error) {
+        debugPrint('Failed to load active order limit; using 3: $error');
+      }
+
+      final customerOrders = await supabase
+          .from('orders')
+          .select('status,reservation_status')
+          .eq('customer_id', user.id);
+      final activeOrderCount = List<Map<String, dynamic>>.from(customerOrders)
+          .where((order) {
+            final status = order['status']?.toString().toLowerCase();
+            final reservationStatus =
+                order['reservation_status']?.toString().toLowerCase();
+            return status == 'pending' ||
+                reservationStatus == 'pending' ||
+                reservationStatus == 'scheduled';
+          })
+          .length;
+
+      if (activeOrderCount >= activeOrderLimit) {
+        if (isLoadingShown && mounted) {
+          Navigator.of(context).pop();
+          isLoadingShown = false;
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'You already have 3 pending orders. Please wait until the station accepts one of your orders before placing another.',
+              ),
+              backgroundColor: Color(0xFFDC2626),
+            ),
+          );
+        }
+        return;
+      }
+
       final insertedOrder = await supabase
           .from('orders')
           .insert({
@@ -926,6 +1103,9 @@ class _OrderScreenState extends State<OrderScreen> {
             // exchange is supported/available for the product.
             'exchange_containers': _exchangeCount,
             'new_containers': _newContainerCount,
+            'borrow_containers': _borrowCount,
+            'borrow_status': _borrowCount > 0 ? 'requested' : 'none',
+            'borrow_notes': _borrowCount > 0 ? 'Customer requested borrowed container.' : null,
             'with_exchange': _exchangeCount > 0,
             'exchange_required': _exchangeCount > 0,
 
@@ -1128,65 +1308,165 @@ class _OrderScreenState extends State<OrderScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Total quantity to order',
+                          'Total containers to order',
                           style: TextStyle(
                             fontSize: 13,
                             color: Color(0xFF94A3B8),
                           ),
                         ),
-                        const SizedBox(height: 14),
-                        _CounterRow(
-                          value: _totalGallons,
-                          onMinusTap: _decreaseTotalGallons,
-                          onPlusTap: _increaseTotalGallons,
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          height: 56,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '$_totalGallons',
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Total is calculated automatically from Exchange, New, and Borrow quantities below.',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF64748B),
+                            height: 1.35,
+                          ),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 12),
-                  if (_requiresExchange) ...[
-                    _SectionCard(
-                      title: 'Container Details',
-                      icon: Icons.inventory_2_outlined,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Specify exchange and new containers',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF94A3B8),
-                            ),
+                  _SectionCard(
+                    title: 'Container Details',
+                    icon: Icons.inventory_2_outlined,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Enter how many containers you want for each option.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF94A3B8),
                           ),
-                          const SizedBox(height: 14),
-                          _CounterGroupCard(
+                        ),
+                        const SizedBox(height: 12),
+                        if (_requiresExchange) ...[
+                          _QuantityInputCard(
                             title: 'With Exchange',
-                            priceBadge: _selectedProduct == null
+                            subtitle: 'Return an empty container',
+                            priceText: _selectedProduct == null
                                 ? 'Select product'
                                 : '₱${_selectedProduct!.exchangePrice} each',
-                            badgeColor: const Color(0xFF1D4ED8),
-                            badgeBg: const Color(0xFFDBEAFE),
-                            value: _exchangeCount,
-                            onMinusTap: _decreaseExchange,
-                            onPlusTap: _increaseExchange,
-                          ),
-                          const SizedBox(height: 10),
-                          _CounterGroupCard(
-                            title: 'New Containers',
-                            priceBadge: _selectedProduct == null
-                                ? 'Select product'
-                                : '₱${_selectedProduct!.basePrice} each',
-                            badgeColor: const Color(0xFFB45309),
-                            badgeBg: const Color(0xFFFEF3C7),
-                            value: _newContainerCount,
-                            onMinusTap: _decreaseNewContainers,
-                            onPlusTap: _increaseNewContainers,
+                            controller: _exchangeController,
+                            onChanged: _onExchangeChanged,
+                            icon: Icons.swap_horiz_rounded,
+                            accentColor: const Color(0xFF1D4ED8),
+                            backgroundColor: const Color(0xFFDBEAFE),
                           ),
                         ],
-                      ),
+                        const SizedBox(height: 10),
+                        _QuantityInputCard(
+                          title: 'New Containers',
+                          subtitle: 'Buy a new container',
+                          priceText: _selectedProduct == null
+                              ? 'Select product'
+                              : '₱${_selectedProduct!.basePrice} each',
+                          controller: _newController,
+                          onChanged: _onNewChanged,
+                          icon: Icons.add_box_outlined,
+                          accentColor: const Color(0xFFB45309),
+                          backgroundColor: const Color(0xFFFEF3C7),
+                        ),
+                        const SizedBox(height: 10),
+                        _QuantityInputCard(
+                          title: 'Borrow Containers',
+                          subtitle: _borrowEnabled
+                              ? 'Temporarily borrow • Maximum $_maximumBorrowContainers'
+                              : 'Borrowing is currently unavailable',
+                          priceText: _borrowEnabled
+                              ? (_selectedProduct == null
+                                  ? 'Select product'
+                                  : '₱${_selectedProduct!.basePrice} each')
+                              : 'Unavailable',
+                          controller: _borrowController,
+                          onChanged: _onBorrowChanged,
+                          enabled: _borrowEnabled,
+                          icon: Icons.inventory_2_outlined,
+                          accentColor: const Color(0xFF92400E),
+                          backgroundColor: const Color(0xFFFEF3C7),
+                        ),
+                        if (_borrowEnabled && _borrowCount > 0) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFBEB),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(0xFFFDE68A),
+                                width: 0.7,
+                              ),
+                            ),
+                            child: const Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  size: 17,
+                                  color: Color(0xFFB45309),
+                                ),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Borrowed containers are not expected back during this delivery. The driver will record them, and you can return them later.',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      height: 1.4,
+                                      color: Color(0xFF92400E),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        if (_containerAllocationError != null) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF2F2),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(0xFFFECACA),
+                              ),
+                            ),
+                            child: Text(
+                              _containerAllocationError!,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFFB91C1C),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                  ],
+                  ),
+                  const SizedBox(height: 12),
                   _SectionCard(
                     title: 'Delivery Address',
                     icon: Icons.location_on_outlined,
@@ -1872,6 +2152,11 @@ class _OrderScreenState extends State<OrderScreen> {
                         ),
                         const _SummaryDivider(),
                         _SummaryRow(
+                          label: 'Borrow Containers',
+                          value: '$_borrowCount',
+                        ),
+                        const _SummaryDivider(),
+                        _SummaryRow(
                           label: 'Delivery Type',
                           value: _deliveryType == 'now'
                               ? 'Deliver Now'
@@ -2086,155 +2371,6 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-class _CounterButton extends StatelessWidget {
-  const _CounterButton({required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Ink(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: const Color(0xFF2563EB),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: Colors.white, size: 20),
-        ),
-      ),
-    );
-  }
-}
-
-class _CounterRow extends StatelessWidget {
-  const _CounterRow({
-    required this.value,
-    required this.onMinusTap,
-    required this.onPlusTap,
-  });
-
-  final int value;
-  final VoidCallback onMinusTap;
-  final VoidCallback onPlusTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        _CounterButton(icon: Icons.remove, onTap: onMinusTap),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Container(
-            height: 44,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              '$value',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF0F172A),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        _CounterButton(icon: Icons.add, onTap: onPlusTap),
-      ],
-    );
-  }
-}
-
-class _CounterGroupCard extends StatelessWidget {
-  const _CounterGroupCard({
-    required this.title,
-    required this.priceBadge,
-    required this.badgeColor,
-    required this.badgeBg,
-    required this.value,
-    required this.onMinusTap,
-    required this.onPlusTap,
-  });
-
-  final String title;
-  final String priceBadge;
-  final Color badgeColor;
-  final Color badgeBg;
-  final int value;
-  final VoidCallback onMinusTap;
-  final VoidCallback onPlusTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF475569),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: badgeBg,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  priceBadge,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: badgeColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _CounterRow(
-            value: value,
-            onMinusTap: onMinusTap,
-            onPlusTap: onPlusTap,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SummaryDivider extends StatelessWidget {
-  const _SummaryDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Divider(height: 16, thickness: 0.5, color: Color(0xFFF1F5F9));
-  }
-}
-
 class _SummaryRow extends StatelessWidget {
   const _SummaryRow({required this.label, required this.value});
 
@@ -2244,21 +2380,179 @@ class _SummaryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
-        const Spacer(),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Color(0xFF0F172A),
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Color(0xFF0F172A),
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SummaryDivider extends StatelessWidget {
+  const _SummaryDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Divider(
+      height: 20,
+      thickness: 0.5,
+      color: Color(0xFFE2E8F0),
+    );
+  }
+}
+
+class _QuantityInputCard extends StatelessWidget {
+  const _QuantityInputCard({
+    required this.title,
+    required this.subtitle,
+    required this.priceText,
+    required this.controller,
+    required this.onChanged,
+    required this.icon,
+    required this.accentColor,
+    required this.backgroundColor,
+    this.enabled = true,
+  });
+
+  final String title;
+  final String subtitle;
+  final String priceText;
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final IconData icon;
+  final Color accentColor;
+  final Color backgroundColor;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: enabled ? const Color(0xFFF8FAFC) : const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, size: 18, color: accentColor),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: backgroundColor,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        priceText,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: accentColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 88,
+            child: TextField(
+              controller: controller,
+              enabled: enabled,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: onChanged,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF0F172A),
+              ),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: enabled ? Colors.white : const Color(0xFFE2E8F0),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 11,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(
+                    color: Color(0xFF2563EB),
+                    width: 1.2,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

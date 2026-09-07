@@ -1,11 +1,11 @@
 {
-    "name": "aqua_in_laba_app",
-    "short_name": "aqua_in_laba_app",
+    "name": "Aqua In Lavada",
+    "short_name": "Aqua In Lavada",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0B5CAD",
+    "theme_color": "#0B5CAD",
+    "description": "Aqua In Lavada water delivery app.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

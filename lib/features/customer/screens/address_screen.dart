@@ -5,6 +5,10 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../customer_session.dart';
+import '../../../models/philippine_location.dart';
+import '../../../utils/address_formatter.dart';
+import '../../../widgets/address/cascading_address_form.dart';
 import 'map_picker_screen.dart';
 
 class AddressScreen extends StatefulWidget {
@@ -53,12 +57,35 @@ class _AddressScreenState extends State<AddressScreen> {
 
       final list = List<Map<String, dynamic>>.from(response)
           .map((row) {
+            final region = _location(row, 'region', 'region_code');
+            final province = _location(row, 'province', 'province_code');
+            final city = _location(
+              row,
+              'city_municipality',
+              'city_municipality_code',
+            );
+            final barangay = _location(row, 'barangay', 'barangay_code');
             return _SavedAddress(
               id: row['id']?.toString(),
               label: (row['label'] ?? 'Home').toString(),
               address: (row['address'] ?? '').toString(),
               latitude: _toDouble(row['latitude']),
               longitude: _toDouble(row['longitude']),
+              structuredData:
+                  region == null ||
+                      province == null ||
+                      city == null ||
+                      barangay == null
+                  ? null
+                  : AddressFormData(
+                      region: region,
+                      province: province,
+                      cityMunicipality: city,
+                      barangay: barangay,
+                      street: _cleanText(row['street']),
+                      houseNumber: _cleanText(row['house_number']),
+                      landmark: _cleanText(row['landmark']),
+                    ),
             );
           })
           .where((item) => item.address.trim().isNotEmpty)
@@ -67,6 +94,9 @@ class _AddressScreenState extends State<AddressScreen> {
       if (!mounted) return;
       setState(() {
         _savedAddresses = list;
+        if (_selectedAddress == null && list.isNotEmpty) {
+          _selectedAddress = list.first.address;
+        }
       });
     } catch (e) {
       debugPrint('Failed to load addresses: $e');
@@ -84,6 +114,35 @@ class _AddressScreenState extends State<AddressScreen> {
     if (value is int) return value.toDouble();
     if (value is String) return double.tryParse(value);
     return null;
+  }
+
+  Future<void> _syncPrimaryAddress(String address) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    await Supabase.instance.client.from('customer_profiles').upsert({
+      'user_id': user.id,
+      'email': user.email ?? '',
+      'address': address,
+    }, onConflict: 'user_id');
+
+    await CustomerSession.save(
+      customerId: user.id,
+      customerName: CustomerSession.name ?? '',
+      customerPhone: CustomerSession.phone,
+      customerAddress: address,
+    );
+  }
+
+  PhilippineLocation? _location(
+    Map<String, dynamic> row,
+    String nameKey,
+    String codeKey,
+  ) {
+    final name = _cleanText(row[nameKey]);
+    final code = _cleanText(row[codeKey]);
+    if (name == null || code == null) return null;
+    return PhilippineLocation(code: code, name: name);
   }
 
   String? _cleanText(dynamic value) {
@@ -196,6 +255,7 @@ class _AddressScreenState extends State<AddressScreen> {
         'latitude': result.latitude,
         'longitude': result.longitude,
       });
+      await _syncPrimaryAddress(selectedAddress);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -222,6 +282,17 @@ class _AddressScreenState extends State<AddressScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Address id is missing')));
+      return;
+    }
+
+    if (address.structuredData != null) {
+      await _openStructuredAddressForm(
+        existingId: id,
+        initialData: address.structuredData,
+        initialLocation: address.latitude == null || address.longitude == null
+            ? null
+            : LatLng(address.latitude!, address.longitude!),
+      );
       return;
     }
 
@@ -302,6 +373,9 @@ class _AddressScreenState extends State<AddressScreen> {
                                 'address': addressController.text.trim(),
                               })
                               .eq('id', id);
+                          await _syncPrimaryAddress(
+                            addressController.text.trim(),
+                          );
 
                           if (!context.mounted) return;
                           Navigator.of(context).pop();
@@ -406,6 +480,7 @@ class _AddressScreenState extends State<AddressScreen> {
     }
   }
 
+  // ignore: unused_element
   void _openAddAddressForm() {
     final labelController = TextEditingController();
     final addressController = TextEditingController();
@@ -496,6 +571,131 @@ class _AddressScreenState extends State<AddressScreen> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openStructuredAddressForm({
+    String? existingId,
+    AddressFormData? initialData,
+    LatLng? initialLocation,
+  }) async {
+    late BuildContext formContext;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (modalContext) {
+        formContext = modalContext;
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(modalContext).viewInsets.bottom + 16,
+          ),
+          child: Container(
+            constraints: const BoxConstraints(maxHeight: 720),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: SingleChildScrollView(
+              child: CascadingAddressForm(
+                initialData: initialData,
+                initialLocation: initialLocation,
+                onPickLocation: () async {
+                  return Navigator.push<LatLng>(
+                    modalContext,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          MapPickerScreen(initialLocation: initialLocation),
+                    ),
+                  );
+                },
+                onSave: (data, location) async {
+                  final user = Supabase.instance.client.auth.currentUser;
+                  if (user == null) throw Exception('Please login first');
+                  final fullAddress = formatAddressParts(
+                    region: data.region.name,
+                    province: data.province.name,
+                    cityMunicipality: data.cityMunicipality.name,
+                    barangay: data.barangay.name,
+                    street: data.street,
+                    houseNumber: data.houseNumber,
+                    landmark: data.landmark,
+                  );
+                  final values = {
+                    'label': 'Home',
+                    'region': data.region.name,
+                    'region_code': data.region.code,
+                    'province': data.province.name,
+                    'province_code': data.province.code,
+                    'city_municipality': data.cityMunicipality.name,
+                    'city_municipality_code': data.cityMunicipality.code,
+                    'barangay': data.barangay.name,
+                    'barangay_code': data.barangay.code,
+                    'street': data.street?.trim(),
+                    'house_number': data.houseNumber?.trim(),
+                    'landmark': data.landmark?.trim(),
+                    'address': fullAddress,
+                    'address_text': fullAddress,
+                    'latitude': location?.latitude,
+                    'longitude': location?.longitude,
+                  };
+                  try {
+                    if (existingId == null) {
+                      await Supabase.instance.client
+                          .from('user_addresses')
+                          .insert({'user_id': user.id, ...values});
+                    } else {
+                      await Supabase.instance.client
+                          .from('user_addresses')
+                          .update(values)
+                          .eq('id', existingId);
+                    }
+                  } on PostgrestException catch (error) {
+                    if (error.code != 'PGRST204') rethrow;
+                    final legacyValues = {
+                      'label': 'Home',
+                      'address': fullAddress,
+                      'address_text': fullAddress,
+                      'latitude': location?.latitude,
+                      'longitude': location?.longitude,
+                    };
+                    if (existingId == null) {
+                      await Supabase.instance.client
+                          .from('user_addresses')
+                          .insert({'user_id': user.id, ...legacyValues});
+                    } else {
+                      await Supabase.instance.client
+                          .from('user_addresses')
+                          .update(legacyValues)
+                          .eq('id', existingId);
+                    }
+                  }
+                  await _syncPrimaryAddress(fullAddress);
+                  if (!mounted || !formContext.mounted) return;
+                  Navigator.of(formContext).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        existingId == null
+                            ? 'Address saved successfully'
+                            : 'Address updated successfully',
+                      ),
+                    ),
+                  );
+                  if (widget.popOnAddressChange) {
+                    Navigator.of(context).pop(true);
+                    return;
+                  }
+                  await _loadSavedAddresses();
+                },
               ),
             ),
           ),
@@ -648,6 +848,14 @@ class _AddressScreenState extends State<AddressScreen> {
                     ),
                     child: _AddressCard(
                       address: address,
+                      onSelect: () {
+                        setState(() {
+                          _selectedAddress = address.address;
+                        });
+                        if (widget.popOnAddressChange) {
+                          Navigator.of(context).pop(true);
+                        }
+                      },
                       onEdit: () => _editAddress(address),
                       onDelete: () => _deleteAddress(address),
                     ),
@@ -659,7 +867,7 @@ class _AddressScreenState extends State<AddressScreen> {
               width: double.infinity,
               height: 52,
               child: ElevatedButton.icon(
-                onPressed: _openAddAddressForm,
+                onPressed: _openStructuredAddressForm,
                 icon: const Icon(Icons.add_rounded, size: 18),
                 label: const Text(
                   'Add Address',
@@ -685,93 +893,99 @@ class _AddressScreenState extends State<AddressScreen> {
 class _AddressCard extends StatelessWidget {
   const _AddressCard({
     required this.address,
+    required this.onSelect,
     required this.onEdit,
     required this.onDelete,
   });
 
   final _SavedAddress address;
+  final VoidCallback onSelect;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0F233455),
-            blurRadius: 16,
-            offset: Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF6FF),
-              borderRadius: BorderRadius.circular(12),
+    return InkWell(
+      onTap: onSelect,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0F233455),
+              blurRadius: 16,
+              offset: Offset(0, 6),
             ),
-            child: const Icon(
-              Icons.location_on_outlined,
-              color: Color(0xFF2563EB),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.location_on_outlined,
+                color: Color(0xFF2563EB),
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              address.label,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              address.address,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                height: 1.4,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Row(
                         children: [
-                          Text(
-                            address.label,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF0F172A),
-                            ),
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: onEdit,
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            address.address,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              height: 1.4,
-                              color: Color(0xFF64748B),
-                            ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: onDelete,
                           ),
                         ],
                       ),
-                    ),
-                    Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.edit, color: Colors.blue),
-                          onPressed: onEdit,
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: onDelete,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -784,6 +998,7 @@ class _SavedAddress {
     required this.address,
     this.latitude,
     this.longitude,
+    this.structuredData,
   });
 
   final String? id;
@@ -791,4 +1006,5 @@ class _SavedAddress {
   final String address;
   final double? latitude;
   final double? longitude;
+  final AddressFormData? structuredData;
 }

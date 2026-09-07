@@ -471,6 +471,23 @@ class _CustomerTrackOrderScreenState
 
   bool _isRefreshing = false;
 
+  // ---------------------------------------------------------------------------
+  // FEEDBACK
+  // ---------------------------------------------------------------------------
+
+  bool _feedbackLoading = false;
+  bool _feedbackSubmitting = false;
+  bool _hasFeedback = false;
+  bool _feedbackChecked = false;
+
+  int _driverRating = 0;
+  int _stationRating = 0;
+
+  String _existingFeedbackComment = '';
+
+  final TextEditingController _feedbackCommentController =
+      TextEditingController();
+
   static const Color _background =
       Color(0xFFF6F8FB);
 
@@ -512,6 +529,8 @@ class _CustomerTrackOrderScreenState
 
     WidgetsBinding.instance
         .removeObserver(this);
+
+    _feedbackCommentController.dispose();
 
     super.dispose();
   }
@@ -568,39 +587,108 @@ class _CustomerTrackOrderScreenState
         return;
       }
 
-      final driverId =
-          response['driver_id'];
+      /*
+      |--------------------------------------------------------------------------
+      | DRIVER INFORMATION
+      |--------------------------------------------------------------------------
+      |
+      | Keep driver information already stored in the order.
+      | Then try employees.id, followed by employees.user_id.
+      |
+      */
 
-      if (driverId != null &&
-          driverId.toString().isNotEmpty) {
+      final driverId =
+          response['driver_id']?.toString().trim() ?? '';
+
+      String existingDriverName =
+          response['driver_name']?.toString().trim() ?? '';
+
+      String existingDriverPhone =
+          response['driver_phone']?.toString().trim() ?? '';
+
+      if (driverId.isNotEmpty) {
+        Map<String, dynamic>? driverData;
+
+        // First try employees.id.
         try {
-          final driverData =
+          final result =
               await Supabase.instance.client
                   .from('employees')
-                  .select(
-                    'full_name, name, phone, mobile_number',
-                  )
-                  .eq(
-                    'id',
-                    driverId.toString(),
-                  )
+                  .select('*')
+                  .eq('id', driverId)
                   .maybeSingle();
 
-          if (driverData != null) {
-            response['driver_name'] =
-                driverData['full_name'] ??
-                    driverData['name'] ??
-                    'Driver';
-
-            response['driver_phone'] =
-                driverData['phone'] ??
-                    driverData[
-                        'mobile_number'] ??
-                    '';
+          if (result != null) {
+            driverData =
+                Map<String, dynamic>.from(result);
           }
-        } catch (_) {
-          // Keep existing driver information.
+        } catch (e) {
+          debugPrint(
+            'fetchOrder driver lookup by id failed: $e',
+          );
         }
+
+        // If not found, try employees.user_id.
+        if (driverData == null) {
+          try {
+            final result =
+                await Supabase.instance.client
+                    .from('employees')
+                    .select('*')
+                    .eq('user_id', driverId)
+                    .maybeSingle();
+
+            if (result != null) {
+              driverData =
+                  Map<String, dynamic>.from(result);
+            }
+          } catch (e) {
+            debugPrint(
+              'fetchOrder driver lookup by user_id failed: $e',
+            );
+          }
+        }
+
+        if (driverData != null) {
+          final employeeName =
+              driverData['full_name']?.toString().trim().isNotEmpty == true
+                  ? driverData['full_name'].toString().trim()
+                  : driverData['name']?.toString().trim().isNotEmpty == true
+                      ? driverData['name'].toString().trim()
+                      : driverData['employee_name']?.toString().trim().isNotEmpty == true
+                          ? driverData['employee_name'].toString().trim()
+                          : driverData['display_name']?.toString().trim().isNotEmpty == true
+                              ? driverData['display_name'].toString().trim()
+                              : '';
+
+          final employeePhone =
+              driverData['phone']?.toString().trim().isNotEmpty == true
+                  ? driverData['phone'].toString().trim()
+                  : driverData['mobile_number']?.toString().trim().isNotEmpty == true
+                      ? driverData['mobile_number'].toString().trim()
+                      : driverData['contact_number']?.toString().trim().isNotEmpty == true
+                          ? driverData['contact_number'].toString().trim()
+                          : '';
+
+          if (employeeName.isNotEmpty) {
+            existingDriverName = employeeName;
+          }
+
+          if (employeePhone.isNotEmpty) {
+            existingDriverPhone = employeePhone;
+          }
+        }
+      }
+
+      // Preserve valid driver information on the order.
+      if (existingDriverName.isNotEmpty) {
+        response['driver_name'] =
+            existingDriverName;
+      }
+
+      if (existingDriverPhone.isNotEmpty) {
+        response['driver_phone'] =
+            existingDriverPhone;
       }
 
       final oldOrder = _liveOrder;
@@ -684,6 +772,11 @@ class _CustomerTrackOrderScreenState
           response,
         );
       }
+
+      // Once the order reaches delivered, load its real feedback record.
+      if (_normalizedStatus() == 'delivered') {
+        await _loadFeedbackIfDelivered();
+      }
     } catch (e) {
       debugPrint(
         'Track order refresh error: $e',
@@ -691,6 +784,563 @@ class _CustomerTrackOrderScreenState
     } finally {
       _isRefreshing = false;
     }
+  }
+
+
+
+  /*
+  |--------------------------------------------------------------------------
+  | FEEDBACK
+  |--------------------------------------------------------------------------
+  |
+  | Customers can submit feedback only after the order is delivered.
+  | Feedback is tied to the real order, customer, and driver IDs.
+  |--------------------------------------------------------------------------
+  */
+
+  String? _feedbackCustomerId() {
+    final orderCustomerId =
+        _order['customer_id']?.toString().trim() ?? '';
+
+    if (orderCustomerId.isNotEmpty) {
+      return orderCustomerId;
+    }
+
+    final authUserId =
+        Supabase.instance.client.auth.currentUser?.id
+            .trim();
+
+    return authUserId == null || authUserId.isEmpty
+        ? null
+        : authUserId;
+  }
+
+  String _feedbackOrderId() {
+    return _order['id']?.toString().trim() ?? '';
+  }
+
+  String? _feedbackDriverId() {
+    final value = _order['driver_id']?.toString().trim() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
+  Future<void> _loadFeedbackIfDelivered({
+    bool force = false,
+  }) async {
+    if (_normalizedStatus() != 'delivered') {
+      return;
+    }
+
+    if (_feedbackChecked && !force) {
+      return;
+    }
+
+    final orderId = _feedbackOrderId();
+    if (orderId.isEmpty) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _feedbackLoading = true;
+      });
+    }
+
+    try {
+      final response =
+          await Supabase.instance.client
+              .from('feedback')
+              .select('*')
+              .eq('order_id', orderId)
+              .maybeSingle();
+
+      if (!mounted) return;
+
+      if (response != null) {
+        final data =
+            Map<String, dynamic>.from(response);
+
+        final comment =
+            data['comment']?.toString() ?? '';
+
+        _driverRating =
+            int.tryParse(
+                  data['driver_rating']?.toString() ?? '',
+                ) ??
+                0;
+
+        _stationRating =
+            int.tryParse(
+                  data['station_rating']?.toString() ?? '',
+                ) ??
+                0;
+
+        _existingFeedbackComment = comment;
+        _feedbackCommentController.text = comment;
+      } else {
+        _driverRating = 0;
+        _stationRating = 0;
+        _existingFeedbackComment = '';
+        _feedbackCommentController.clear();
+      }
+
+      setState(() {
+        _hasFeedback = response != null;
+        _feedbackChecked = true;
+        _feedbackLoading = false;
+      });
+    } catch (e) {
+      debugPrint(
+        'Feedback load error: $e',
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _feedbackLoading = false;
+        _feedbackChecked = false;
+      });
+    }
+  }
+
+  Future<void> _submitFeedback() async {
+    if (_feedbackSubmitting || _hasFeedback) {
+      return;
+    }
+
+    if (_normalizedStatus() != 'delivered') {
+      _showFeedbackMessage(
+        'Feedback can only be submitted after delivery.',
+        isError: true,
+      );
+      return;
+    }
+
+    final orderId = _feedbackOrderId();
+    final customerId = _feedbackCustomerId();
+    final driverId = _feedbackDriverId();
+
+    if (orderId.isEmpty || customerId == null) {
+      _showFeedbackMessage(
+        'Unable to identify this order or customer.',
+        isError: true,
+      );
+      return;
+    }
+
+    if (_driverRating < 1 || _stationRating < 1) {
+      _showFeedbackMessage(
+        'Please rate both the driver and the water station.',
+        isError: true,
+      );
+      return;
+    }
+
+    final comment =
+        _feedbackCommentController.text.trim();
+
+    if (!mounted) return;
+
+    setState(() {
+      _feedbackSubmitting = true;
+    });
+
+    try {
+      await Supabase.instance.client
+          .from('feedback')
+          .insert({
+            'order_id': orderId,
+            'customer_id': customerId,
+            'driver_id': driverId,
+            'driver_rating': _driverRating,
+            'station_rating': _stationRating,
+            'comment': comment.isEmpty ? null : comment,
+          });
+
+      if (!mounted) return;
+
+      setState(() {
+        _hasFeedback = true;
+        _feedbackSubmitting = false;
+        _feedbackChecked = true;
+        _existingFeedbackComment = comment;
+      });
+
+      _showFeedbackMessage(
+        'Thank you! Your feedback has been submitted.',
+      );
+    } on PostgrestException catch (e) {
+      debugPrint(
+        'Feedback submit error: ${e.message}',
+      );
+
+      // 23505 = duplicate order_id.
+      // This can happen if another request submitted feedback
+      // at the same time. Load the existing record instead of
+      // showing the customer a misleading failure.
+      if (e.code == '23505') {
+        await _loadFeedbackIfDelivered(force: true);
+
+        if (mounted && _hasFeedback) {
+          _showFeedbackMessage(
+            'Feedback for this order has already been submitted.',
+          );
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _feedbackSubmitting = false;
+          });
+
+          _showFeedbackMessage(
+            'Unable to submit feedback. Please try again.',
+            isError: true,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint(
+        'Feedback submit error: $e',
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _feedbackSubmitting = false;
+      });
+
+      _showFeedbackMessage(
+        'Unable to submit feedback. Please try again.',
+        isError: true,
+      );
+    }
+  }
+
+  void _showFeedbackMessage(
+    String message, {
+    bool isError = false,
+  }) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError
+              ? const Color(0xFFDC2626)
+              : const Color(0xFF16A34A),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  Widget _buildStarRating({
+    required String title,
+    required int rating,
+    required ValueChanged<int> onChanged,
+    required bool enabled,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF0F172A),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: List.generate(5, (index) {
+            final starNumber = index + 1;
+            final selected = starNumber <= rating;
+
+            return IconButton(
+              onPressed: enabled
+                  ? () => onChanged(starNumber)
+                  : null,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(2),
+              constraints: const BoxConstraints(
+                minWidth: 40,
+                minHeight: 40,
+              ),
+              icon: Icon(
+                selected
+                    ? Icons.star_rounded
+                    : Icons.star_border_rounded,
+                size: 34,
+                color: selected
+                    ? const Color(0xFFF59E0B)
+                    : const Color(0xFFCBD5E1),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeedbackCard() {
+    if (_normalizedStatus() != 'delivered' ||
+        _isPaymentRejected) {
+      return const SizedBox.shrink();
+    }
+
+    if (_feedbackLoading) {
+      return const _CardContainer(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
+    if (_hasFeedback) {
+      return _CardContainer(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDCFCE7),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.check_circle_rounded,
+                    color: Color(0xFF16A34A),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Feedback Submitted',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      SizedBox(height: 3),
+                      Text(
+                        'Thank you for sharing your experience.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _buildStarRating(
+              title: 'Driver',
+              rating: _driverRating,
+              onChanged: (_) {},
+              enabled: false,
+            ),
+            const SizedBox(height: 12),
+            _buildStarRating(
+              title: 'Water Station',
+              rating: _stationRating,
+              onChanged: (_) {},
+              enabled: false,
+            ),
+            if (_existingFeedbackComment.trim().isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFFE2E8F0),
+                  ),
+                ),
+                child: Text(
+                  _existingFeedbackComment,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF334155),
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return _CardContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.rate_review_outlined,
+                  color: _primaryBlue,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Rate Your Experience',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Your order has been delivered. Tell us how we did.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF64748B),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _buildStarRating(
+            title: 'How was your driver?',
+            rating: _driverRating,
+            onChanged: (value) {
+              setState(() {
+                _driverRating = value;
+              });
+            },
+            enabled: !_feedbackSubmitting,
+          ),
+          const SizedBox(height: 12),
+          _buildStarRating(
+            title: 'How was the water station?',
+            rating: _stationRating,
+            onChanged: (value) {
+              setState(() {
+                _stationRating = value;
+              });
+            },
+            enabled: !_feedbackSubmitting,
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'Additional comments',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _feedbackCommentController,
+            enabled: !_feedbackSubmitting,
+            maxLines: 4,
+            maxLength: 500,
+            textInputAction: TextInputAction.newline,
+            decoration: InputDecoration(
+              hintText: 'Tell us about your experience...',
+              hintStyle: const TextStyle(
+                color: Color(0xFF94A3B8),
+                fontSize: 14,
+              ),
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              contentPadding: const EdgeInsets.all(14),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                  color: Color(0xFFE2E8F0),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                  color: Color(0xFFE2E8F0),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                  color: _primaryBlue,
+                  width: 1.5,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _feedbackSubmitting
+                  ? null
+                  : _submitFeedback,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primaryBlue,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: const Color(0xFF93C5FD),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: _feedbackSubmitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.send_rounded, size: 18),
+              label: Text(
+                _feedbackSubmitting
+                    ? 'Submitting...'
+                    : 'Submit Feedback',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /*
@@ -701,80 +1351,208 @@ class _CustomerTrackOrderScreenState
 
   Future<void> loadDriver() async {
     try {
-      final driverId =
-          _liveOrder['driver_id'];
+      /*
+      |--------------------------------------------------------------------------
+      | DRIVER INFORMATION FROM ORDER
+      |--------------------------------------------------------------------------
+      |
+      | Use driver_name / driver_phone already stored in the order first.
+      | Then resolve the employee from employees.id or employees.user_id.
+      |
+      */
 
-      if (driverId == null ||
-          driverId.toString().isEmpty) {
+      final orderDriverName =
+          _liveOrder['driver_name']?.toString().trim() ?? '';
+
+      final orderDriverPhone =
+          _liveOrder['driver_phone']?.toString().trim() ?? '';
+
+      final driverId =
+          _liveOrder['driver_id']?.toString().trim() ?? '';
+
+      // If the order already has the driver's name, show it immediately.
+      if (orderDriverName.isNotEmpty) {
+        if (!mounted) return;
+
+        setState(() {
+          driverName = orderDriverName;
+
+          if (orderDriverPhone.isNotEmpty) {
+            driverPhone = orderDriverPhone;
+          }
+
+          _currentDriverId =
+              driverId.isNotEmpty ? driverId : null;
+
+          isLoadingDriver = false;
+        });
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | NO DRIVER ASSIGNED
+      |--------------------------------------------------------------------------
+      */
+
+      if (driverId.isEmpty) {
         if (!mounted) return;
 
         setState(() {
           _currentDriverId = null;
-          driverName =
-              'Waiting for driver...';
-          driverPhone = '';
+
+          if (driverName == null ||
+              driverName!.trim().isEmpty) {
+            driverName = 'Waiting for driver...';
+          }
+
           isLoadingDriver = false;
         });
 
         return;
       }
 
-      final driverIdString =
-          driverId.toString();
+      /*
+      |--------------------------------------------------------------------------
+      | AVOID REPEATED LOOKUPS
+      |--------------------------------------------------------------------------
+      */
 
-      if (_currentDriverId ==
-              driverIdString &&
+      if (_currentDriverId == driverId &&
           driverName != null &&
-          driverName!.isNotEmpty) {
+          driverName!.trim().isNotEmpty &&
+          driverName != 'Waiting for driver...' &&
+          driverName != 'Unable to load driver' &&
+          driverName != 'Driver assigned') {
         return;
       }
 
       if (!mounted) return;
 
       setState(() {
-        _currentDriverId =
-            driverIdString;
+        _currentDriverId = driverId;
         isLoadingDriver = true;
       });
 
-      final response =
-          await Supabase.instance.client
-              .from('employees')
-              .select(
-                'full_name, name, phone, mobile_number',
-              )
-              .eq(
-                'id',
-                driverIdString,
-              )
-              .maybeSingle();
+      /*
+      |--------------------------------------------------------------------------
+      | TRY employees.id
+      |--------------------------------------------------------------------------
+      */
 
-      if (!mounted) return;
+      Map<String, dynamic>? employee;
 
-      if (response == null) {
+      try {
+        final result =
+            await Supabase.instance.client
+                .from('employees')
+                .select('*')
+                .eq('id', driverId)
+                .maybeSingle();
+
+        if (result != null) {
+          employee =
+              Map<String, dynamic>.from(result);
+        }
+      } catch (e) {
+        debugPrint(
+          'Driver lookup by employees.id failed: $e',
+        );
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | TRY employees.user_id
+      |--------------------------------------------------------------------------
+      */
+
+      if (employee == null) {
+        try {
+          final result =
+              await Supabase.instance.client
+                  .from('employees')
+                  .select('*')
+                  .eq('user_id', driverId)
+                  .maybeSingle();
+
+          if (result != null) {
+            employee =
+                Map<String, dynamic>.from(result);
+          }
+        } catch (e) {
+          debugPrint(
+            'Driver lookup by employees.user_id failed: $e',
+          );
+        }
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | EMPLOYEE FOUND
+      |--------------------------------------------------------------------------
+      */
+
+      if (employee != null) {
+        final name =
+            employee['full_name']?.toString().trim().isNotEmpty == true
+                ? employee['full_name'].toString().trim()
+                : employee['name']?.toString().trim().isNotEmpty == true
+                    ? employee['name'].toString().trim()
+                    : employee['employee_name']?.toString().trim().isNotEmpty == true
+                        ? employee['employee_name'].toString().trim()
+                        : employee['display_name']?.toString().trim().isNotEmpty == true
+                            ? employee['display_name'].toString().trim()
+                            : '';
+
+        final phone =
+            employee['phone']?.toString().trim().isNotEmpty == true
+                ? employee['phone'].toString().trim()
+                : employee['mobile_number']?.toString().trim().isNotEmpty == true
+                    ? employee['mobile_number'].toString().trim()
+                    : employee['contact_number']?.toString().trim().isNotEmpty == true
+                        ? employee['contact_number'].toString().trim()
+                        : '';
+
+        if (!mounted) return;
+
         setState(() {
-          driverName =
-              'Driver not found';
-          driverPhone = '';
+          if (name.isNotEmpty) {
+            driverName = name;
+          }
+
+          if (phone.isNotEmpty) {
+            driverPhone = phone;
+          }
+
           isLoadingDriver = false;
         });
 
         return;
       }
 
-      setState(() {
-        driverName =
-            response['full_name'] ??
-                response['name'] ??
-                'Unknown Driver';
+      /*
+      |--------------------------------------------------------------------------
+      | EMPLOYEE RECORD NOT FOUND
+      |--------------------------------------------------------------------------
+      |
+      | Do not overwrite an existing driver name.
+      |
+      */
 
-        driverPhone =
-            response['phone'] ??
-                response['mobile_number'] ??
-                '';
+      if (!mounted) return;
+
+      setState(() {
+        if (driverName == null ||
+            driverName!.trim().isEmpty ||
+            driverName == 'Waiting for driver...') {
+          driverName = 'Driver assigned';
+        }
 
         isLoadingDriver = false;
       });
+
+      debugPrint(
+        'Driver employee record not found for driver_id: $driverId',
+      );
     } catch (e) {
       debugPrint(
         'Driver fetch error: $e',
@@ -782,15 +1560,26 @@ class _CustomerTrackOrderScreenState
 
       if (!mounted) return;
 
+      /*
+      |--------------------------------------------------------------------------
+      | ERROR HANDLING
+      |--------------------------------------------------------------------------
+      |
+      | Keep the driver name already received from the order.
+      | Never replace it with "Unable to load driver".
+      |
+      */
+
       setState(() {
-        driverName =
-            'Unable to load driver';
-        driverPhone = '';
+        if (driverName == null ||
+            driverName!.trim().isEmpty) {
+          driverName = 'Driver assigned';
+        }
+
         isLoadingDriver = false;
       });
     }
   }
-
   /*
   |--------------------------------------------------------------------------
   | ORDER HELPERS
@@ -1987,6 +2776,12 @@ class _CustomerTrackOrderScreenState
             const SizedBox(height: 14),
 
             _buildOrderInfoCard(),
+
+            if (_normalizedStatus() == 'delivered' &&
+                !_isPaymentRejected) ...[
+              const SizedBox(height: 14),
+              _buildFeedbackCard(),
+            ],
 
             if (!_isPaymentRejected) ...[
               const SizedBox(height: 14),

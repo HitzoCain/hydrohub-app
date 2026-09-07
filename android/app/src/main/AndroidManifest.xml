@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
     <application
-        android:label="aqua_in_laba_app"
+        android:label="Aqua In Lavada"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

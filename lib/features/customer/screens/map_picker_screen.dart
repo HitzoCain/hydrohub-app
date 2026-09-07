@@ -3,7 +3,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 class MapPickerScreen extends StatefulWidget {
-  const MapPickerScreen({super.key});
+  const MapPickerScreen({super.key, this.initialLocation});
+
+  final LatLng? initialLocation;
 
   @override
   State<MapPickerScreen> createState() => _MapPickerScreenState();
@@ -13,6 +15,12 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   LatLng? selectedLatLng;
 
   @override
+  void initState() {
+    super.initState();
+    selectedLatLng = widget.initialLocation;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Select Location')),
@@ -20,7 +28,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
         children: [
           FlutterMap(
             options: MapOptions(
-              initialCenter: const LatLng(11.775, 124.886),
+              initialCenter: widget.initialLocation ?? const LatLng(11.775, 124.886),
               initialZoom: 15,
               onTap: (tapPosition, point) {
                 setState(() {

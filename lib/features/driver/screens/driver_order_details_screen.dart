@@ -63,6 +63,18 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   final TextEditingController _missingController =
       TextEditingController(text: '0');
 
+  // Previous borrowed-container return (separate from the current order exchange).
+  bool _returnPreviousBorrowed = false;
+  bool _isLoadingBorrowings = false;
+  List<Map<String, dynamic>> _activeBorrowings = [];
+
+  final TextEditingController _borrowReturnController =
+      TextEditingController(text: '0');
+  final TextEditingController _borrowDamagedController =
+      TextEditingController(text: '0');
+  final TextEditingController _borrowMissingController =
+      TextEditingController(text: '0');
+
   @override
   void initState() {
     super.initState();
@@ -80,6 +92,11 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     _returnedController.dispose();
     _damagedController.dispose();
     _missingController.dispose();
+
+    _borrowReturnController.dispose();
+    _borrowDamagedController.dispose();
+    _borrowMissingController.dispose();
+
     super.dispose();
   }
 
@@ -206,20 +223,33 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
       final orderData = Map<String, dynamic>.from(response);
 
-      // Compatibility for older orders created before the customer app
-      // started saving the actual exchange/new-container counts.
-      // If the order says exchange was selected but has no count fields,
-      // treat the ordered quantity as exchange and zero as new containers.
-      // New orders always have the explicit fields, so their exact selection
-      // is preserved.
-      final totalGallons = _toInt(orderData['gallons'], fallback: widget.totalGallons);
-      final hasExchangeCount = orderData.containsKey('exchange_containers') &&
-          orderData['exchange_containers'] != null;
-      final hasNewContainerCount = orderData.containsKey('new_containers') &&
-          orderData['new_containers'] != null;
+      // Compatibility for older orders. Never infer an exchange return
+      // for a Borrow Container order.
+      final totalGallons =
+          _toInt(orderData['gallons'], fallback: widget.totalGallons);
 
-      if (!hasExchangeCount && !hasNewContainerCount &&
-          _hasTrueValue(orderData['exchange_required']) && totalGallons > 0) {
+      final deliveryType =
+          _textOf(orderData['delivery_type'], fallback: '').toLowerCase();
+      final borrowContainers =
+          _toInt(orderData['borrow_containers'], fallback: 0);
+
+      final isBorrowRecord = deliveryType == 'borrow_containers' ||
+          borrowContainers > 0 ||
+          _textOf(orderData['borrow_status'], fallback: 'none').toLowerCase() !=
+              'none';
+
+      final hasExchangeCount =
+          orderData.containsKey('exchange_containers') &&
+              orderData['exchange_containers'] != null;
+      final hasNewContainerCount =
+          orderData.containsKey('new_containers') &&
+              orderData['new_containers'] != null;
+
+      if (!isBorrowRecord &&
+          !hasExchangeCount &&
+          !hasNewContainerCount &&
+          _hasTrueValue(orderData['exchange_required']) &&
+          totalGallons > 0) {
         orderData['exchange_containers'] = totalGallons;
         orderData['new_containers'] = 0;
         orderData['with_exchange'] = true;
@@ -322,7 +352,16 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
           _damagedController.text = '0';
           _missingController.text = '0';
         }
+
+        // Previous borrowed-container returns are optional. Reset them when
+        // the order is loaded so the driver must explicitly opt in.
+        _returnPreviousBorrowed = false;
+        _borrowReturnController.text = '0';
+        _borrowDamagedController.text = '0';
+        _borrowMissingController.text = '0';
       });
+
+      await _loadActiveBorrowings();
     } catch (e) {
       debugPrint('Failed to load order details: $e');
     } finally {
@@ -331,6 +370,619 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
           _isLoadingOrder = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadActiveBorrowings() async {
+    final customerId = _textOf(
+      _order?['customer_id'],
+      fallback: '',
+    );
+
+    if (customerId.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _activeBorrowings = [];
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _isLoadingBorrowings = true;
+    });
+
+    try {
+      final supabase = Supabase.instance.client;
+
+      // Load only active borrowings belonging to this customer. The current
+      // order is excluded because this feature is specifically for containers
+      // borrowed from an earlier transaction.
+      final response = await supabase
+          .from('container_borrowings')
+          .select()
+          .eq('customer_id', customerId)
+          .inFilter(
+            'status',
+            [
+              'approved',
+              'borrowed',
+              'partially_returned',
+            ],
+          )
+          .neq('order_id', _rawOrderId)
+          .order('borrowed_at', ascending: true);
+
+      final rows = List<Map<String, dynamic>>.from(
+        (response as List).map(
+          (row) => Map<String, dynamic>.from(row as Map),
+        ),
+      );
+
+      final activeRows = rows.where((row) {
+        final quantity = _toInt(
+          row['quantity'],
+          fallback: 0,
+        );
+        final returned = _toInt(
+          row['returned_quantity'],
+          fallback: 0,
+        );
+        final damaged = _toInt(
+          row['damaged_quantity'],
+          fallback: 0,
+        );
+        final missing = _toInt(
+          row['missing_quantity'],
+          fallback: 0,
+        );
+
+        final outstanding =
+            quantity - returned - damaged - missing;
+
+        return outstanding > 0;
+      }).toList();
+
+      if (!mounted) return;
+
+      setState(() {
+        _activeBorrowings = activeRows;
+      });
+    } catch (e) {
+      debugPrint('Failed to load active borrowed containers: $e');
+
+      if (mounted) {
+        setState(() {
+          _activeBorrowings = [];
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingBorrowings = false;
+        });
+      }
+    }
+  }
+
+  int _borrowingOutstanding(Map<String, dynamic> borrowing) {
+    final quantity = _toInt(
+      borrowing['quantity'],
+      fallback: 0,
+    );
+    final returned = _toInt(
+      borrowing['returned_quantity'],
+      fallback: 0,
+    );
+    final damaged = _toInt(
+      borrowing['damaged_quantity'],
+      fallback: 0,
+    );
+    final missing = _toInt(
+      borrowing['missing_quantity'],
+      fallback: 0,
+    );
+
+    return (quantity - returned - damaged - missing).clamp(0, quantity).toInt();
+  }
+
+  int get _totalOutstandingBorrowed {
+    return _activeBorrowings.fold<int>(
+      0,
+      (total, row) => total + _borrowingOutstanding(row),
+    );
+  }
+
+  int get _borrowReturnQuantity =>
+      _controllerValue(_borrowReturnController);
+
+  int get _borrowDamagedQuantity =>
+      _controllerValue(_borrowDamagedController);
+
+  int get _borrowMissingQuantity =>
+      _controllerValue(_borrowMissingController);
+
+  int get _borrowAccountedQuantity =>
+      _borrowReturnQuantity +
+      _borrowDamagedQuantity +
+      _borrowMissingQuantity;
+
+  Widget _buildPreviousBorrowedReturnCard() {
+    final outstanding = _totalOutstandingBorrowed;
+    final accounted = _borrowAccountedQuantity;
+    final remaining = outstanding - accounted;
+    final isComplete = _returnPreviousBorrowed && remaining == 0;
+    final isOver = remaining < 0;
+    final hasOutstanding = outstanding > 0;
+
+    return _SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  color: Color(0xFFD97706),
+                  size: 21,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Previous Borrowed Containers',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+              ),
+              if (!_isLoadingBorrowings && hasOutstanding)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF7ED),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '$outstanding',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFFD97706),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _isLoadingBorrowings
+                ? 'Checking the customer\'s previous borrowed-container records...'
+                : hasOutstanding
+                    ? 'The customer has $outstanding outstanding borrowed container(s) from previous transactions. These can be returned during this delivery even though they are not part of the current order.'
+                    : 'No outstanding borrowed containers were found for this customer.',
+            style: const TextStyle(
+              fontSize: 12,
+              height: 1.45,
+              color: Color(0xFF64748B),
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_isLoadingBorrowings)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else ...[
+            if (hasOutstanding) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFFE2E8F0),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Outstanding Borrowing Records',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF475569),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ..._activeBorrowings.map(
+                      (borrowing) {
+                        final quantity = _borrowingOutstanding(borrowing);
+                        if (quantity <= 0) {
+                          return const SizedBox.shrink();
+                        }
+
+                        final capacity = _resolvedCapacity(borrowing);
+                        final borrowedAt = _textOf(
+                          borrowing['borrowed_at'],
+                          fallback: '',
+                        );
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 7),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(
+                                Icons.circle,
+                                size: 7,
+                                color: Color(0xFFD97706),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  borrowedAt.isEmpty
+                                      ? '$capacity • $quantity container(s) outstanding'
+                                      : '$capacity • $quantity container(s) outstanding\nBorrowed: $borrowedAt',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    height: 1.4,
+                                    color: Color(0xFF475569),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Customer wants to return borrowed containers',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF334155),
+                ),
+              ),
+              subtitle: Text(
+                hasOutstanding
+                    ? 'Turn this on when the customer gives previously borrowed containers to the driver.'
+                    : 'There are no previous borrowed containers available to return.',
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+              value: _returnPreviousBorrowed,
+              activeThumbColor: _primaryBlue,
+              onChanged: hasOutstanding
+                  ? (value) {
+                      setState(() {
+                        _returnPreviousBorrowed = value;
+                        if (!value) {
+                          _borrowReturnController.text = '0';
+                          _borrowDamagedController.text = '0';
+                          _borrowMissingController.text = '0';
+                        }
+                      });
+                    }
+                  : null,
+            ),
+            if (_returnPreviousBorrowed && hasOutstanding) ...[
+              const Divider(height: 24),
+              _InfoRow(
+                label: 'Outstanding Borrowed',
+                value: '$outstanding containers',
+                valueColor: const Color(0xFFD97706),
+              ),
+              const SizedBox(height: 14),
+              _buildQuantityField(
+                label: 'Returned',
+                controller: _borrowReturnController,
+                icon: Icons.replay_circle_filled_outlined,
+                color: _successGreen,
+              ),
+              const SizedBox(height: 10),
+              _buildQuantityField(
+                label: 'Damaged',
+                controller: _borrowDamagedController,
+                icon: Icons.warning_amber_rounded,
+                color: const Color(0xFFD97706),
+              ),
+              const SizedBox(height: 10),
+              _buildQuantityField(
+                label: 'Missing',
+                controller: _borrowMissingController,
+                icon: Icons.help_outline_rounded,
+                color: const Color(0xFFDC2626),
+              ),
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isComplete
+                      ? const Color(0xFFF0FDF4)
+                      : isOver
+                          ? const Color(0xFFFEF2F2)
+                          : const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isComplete
+                        ? const Color(0xFFBBF7D0)
+                        : isOver
+                            ? const Color(0xFFFECACA)
+                            : const Color(0xFFFED7AA),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      isComplete
+                          ? Icons.check_circle_outline
+                          : isOver
+                              ? Icons.error_outline
+                              : Icons.info_outline,
+                      color: isComplete
+                          ? _successGreen
+                          : isOver
+                              ? const Color(0xFFDC2626)
+                              : const Color(0xFFD97706),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        isComplete
+                            ? 'All entered previous borrowed containers are accounted for.'
+                            : isOver
+                                ? 'The quantities exceed the customer\'s outstanding borrowed containers.'
+                                : '$remaining container(s) still need to be accounted for. Partial returns are allowed.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.4,
+                          fontWeight: FontWeight.w700,
+                          color: isComplete
+                              ? const Color(0xFF166534)
+                              : isOver
+                                  ? const Color(0xFF991B1B)
+                                  : const Color(0xFF9A3412),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _recordPreviousBorrowedReturns({
+    required SupabaseClient supabase,
+    required String customerId,
+    required String currentOrderId,
+    required String driverId,
+  }) async {
+    if (!_returnPreviousBorrowed) return;
+
+    final returned = _borrowReturnQuantity;
+    final damaged = _borrowDamagedQuantity;
+    final missing = _borrowMissingQuantity;
+    final totalToAccount = returned + damaged + missing;
+
+    if (totalToAccount <= 0) {
+      throw Exception(
+        'Please enter a returned, damaged, or missing quantity for the previous borrowed containers.',
+      );
+    }
+
+    // Reload the latest records so the database remains the source of truth.
+    final response = await supabase
+        .from('container_borrowings')
+        .select()
+        .eq('customer_id', customerId)
+        .inFilter(
+          'status',
+          [
+            'approved',
+            'borrowed',
+            'partially_returned',
+          ],
+        )
+        .neq('order_id', currentOrderId)
+        .order('borrowed_at', ascending: true);
+
+    final borrowings = List<Map<String, dynamic>>.from(
+      (response as List).map(
+        (row) => Map<String, dynamic>.from(row as Map),
+      ),
+    );
+
+    int latestOutstanding = 0;
+    for (final borrowing in borrowings) {
+      latestOutstanding += _borrowingOutstanding(borrowing);
+    }
+
+    if (latestOutstanding <= 0) {
+      throw Exception(
+        'The customer has no outstanding borrowed containers to return.',
+      );
+    }
+
+    if (totalToAccount > latestOutstanding) {
+      throw Exception(
+        'The return quantity exceeds the customer\'s current outstanding borrowed quantity of $latestOutstanding. Please refresh and try again.',
+      );
+    }
+
+    int remainingReturned = returned;
+    int remainingDamaged = damaged;
+    int remainingMissing = missing;
+
+    for (final borrowing in borrowings) {
+      if (remainingReturned <= 0 &&
+          remainingDamaged <= 0 &&
+          remainingMissing <= 0) {
+        break;
+      }
+
+      final borrowingId = borrowing['id']?.toString();
+      if (borrowingId == null || borrowingId.isEmpty) {
+        continue;
+      }
+
+      final outstanding = _borrowingOutstanding(borrowing);
+      if (outstanding <= 0) continue;
+
+      // Allocate the customer's actual returned containers first, oldest
+      // borrowing first. Any damaged/missing quantity is then allocated
+      // against the remaining quantity of that same borrowing.
+      final allocateReturned = remainingReturned > outstanding
+          ? outstanding
+          : remainingReturned;
+      remainingReturned -= allocateReturned;
+
+      int remainingForDamage = outstanding - allocateReturned;
+
+      final allocateDamaged = remainingDamaged > remainingForDamage
+          ? remainingForDamage
+          : remainingDamaged;
+      remainingDamaged -= allocateDamaged;
+      remainingForDamage -= allocateDamaged;
+
+      final allocateMissing = remainingMissing > remainingForDamage
+          ? remainingForDamage
+          : remainingMissing;
+      remainingMissing -= allocateMissing;
+
+      final allocatedTotal =
+          allocateReturned + allocateDamaged + allocateMissing;
+
+      if (allocatedTotal <= 0) {
+        continue;
+      }
+
+      final oldReturned = _toInt(
+        borrowing['returned_quantity'],
+        fallback: 0,
+      );
+      final oldDamaged = _toInt(
+        borrowing['damaged_quantity'],
+        fallback: 0,
+      );
+      final oldMissing = _toInt(
+        borrowing['missing_quantity'],
+        fallback: 0,
+      );
+      final quantity = _toInt(
+        borrowing['quantity'],
+        fallback: 0,
+      );
+
+      final newReturned = oldReturned + allocateReturned;
+      final newDamaged = oldDamaged + allocateDamaged;
+      final newMissing = oldMissing + allocateMissing;
+
+      final newOutstanding =
+          quantity - newReturned - newDamaged - newMissing;
+
+      if (newReturned + newDamaged + newMissing > quantity) {
+        throw Exception(
+          'The return would exceed the original borrowed quantity for borrowing record $borrowingId.',
+        );
+      }
+
+      final nextStatus = newOutstanding <= 0
+          ? 'returned'
+          : 'partially_returned';
+
+      final now = DateTime.now().toIso8601String();
+
+      // ---------------------------------------------------------------
+      // RECORD THE PHYSICAL RETURN
+      // ---------------------------------------------------------------
+      // Your current container_returns schema does not have borrowing_id,
+      // so the borrowing record ID is included in notes. The current order
+      // ID links this return to the delivery during which it was collected.
+      final capacity = _resolvedCapacity(borrowing);
+
+      await supabase.from('container_returns').insert({
+        'order_id': currentOrderId,
+        'driver_id': driverId,
+        'customer_id': customerId,
+        'customer_name': borrowing['customer_name'] ??
+            _resolvedCustomerName(),
+        'capacity': capacity,
+        'expected_quantity': allocatedTotal,
+        'returned_quantity': allocateReturned,
+        'damaged_quantity': allocateDamaged,
+        'missing_quantity': allocateMissing,
+        'notes':
+            'Previous borrowed-container return. Borrowing ID: $borrowingId. '
+            'Recorded by driver $driverId during order $currentOrderId.',
+      });
+
+      // ---------------------------------------------------------------
+      // UPDATE THE CUSTOMER'S OUTSTANDING BORROWING
+      // ---------------------------------------------------------------
+      final updateData = <String, dynamic>{
+        'returned_quantity': newReturned,
+        'damaged_quantity': newDamaged,
+        'missing_quantity': newMissing,
+        'status': nextStatus,
+        'updated_at': now,
+        'notes':
+            'Previous borrowed-container return recorded by driver $driverId during order $currentOrderId.',
+      };
+
+      if (nextStatus == 'returned') {
+        updateData['returned_at'] = now;
+      }
+
+      await supabase
+          .from('container_borrowings')
+          .update(updateData)
+          .eq('id', borrowingId);
+    }
+
+    if (remainingReturned > 0 ||
+        remainingDamaged > 0 ||
+        remainingMissing > 0) {
+      throw Exception(
+        'The borrowed-container return could not be completely recorded. Please refresh and try again.',
+      );
     }
   }
 
@@ -361,60 +1013,73 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     return _toInt(_order?['gallons'], fallback: widget.totalGallons);
   }
 
-  int _resolvedExchangeContainers() {
+  String _resolvedDeliveryType([Map<String, dynamic>? source]) {
+    final order = source ?? _order ?? const <String, dynamic>{};
+
+    final rawType =
+        _textOf(order['delivery_type'], fallback: '').trim().toLowerCase();
+
+    if (rawType == 'borrow_containers' ||
+        _toInt(order['borrow_containers'], fallback: 0) > 0 ||
+        _textOf(order['borrow_status'], fallback: 'none').trim().toLowerCase() !=
+            'none') {
+      return 'borrow_containers';
+    }
+
+    if (rawType == 'with_exchange') return 'with_exchange';
+    if (rawType == 'new_gallons') return 'new_gallons';
+
+    if (_toBool(order['with_exchange'])) return 'with_exchange';
+    if (_toInt(order['exchange_containers'], fallback: 0) > 0) {
+      return 'with_exchange';
+    }
+    if (_hasTrueValue(order['exchange_required'])) return 'with_exchange';
+
+    return 'new_gallons';
+  }
+
+  bool _isBorrowOrder([Map<String, dynamic>? source]) =>
+      _resolvedDeliveryType(source) == 'borrow_containers';
+
+  bool _isExchangeOrder([Map<String, dynamic>? source]) =>
+      _resolvedDeliveryType(source) == 'with_exchange';
+
+  int _resolvedBorrowContainers() {
     final total = _resolvedTotalGallons();
+    final explicit = _order?['borrow_containers'];
 
-    // The customer's selected quantity is the source of truth.
-    final explicitExchange = _order?['exchange_containers'];
-    if (explicitExchange != null) {
-      final exchange = _toInt(explicitExchange, fallback: 0);
-      if (exchange > 0) {
-        return exchange.clamp(0, total).toInt();
-      }
-
-      // Some older/newer records may contain `exchange_containers = 0`
-      // together with `with_exchange = true`. In that case the boolean
-      // explicitly says the customer selected exchange.
-      if (_toBool(_order?['with_exchange'])) {
-        return total;
-      }
-
-      return 0;
-    }
-
-    // Compatibility with orders created before exchange_containers was saved.
-    final newContainers = _order?['new_containers'];
-    if (newContainers != null) {
-      final newQuantity = _toInt(newContainers, fallback: total);
-      final inferred = total - newQuantity;
-      return inferred.clamp(0, total).toInt();
-    }
-
-    // Compatibility with orders that only saved the customer's boolean.
-    if (_toBool(_order?['with_exchange'])) {
-      return total;
-    }
-
-    // Legacy orders used exchange_required as the actual selected exchange
-    // flag. Use it only as the final fallback when the newer fields are absent.
-    if (_hasTrueValue(_order?['exchange_required'])) {
-      return total;
+    if (explicit != null) {
+      final parsed = _toInt(explicit, fallback: 0);
+      return parsed.clamp(0, total > 0 ? total : parsed).toInt();
     }
 
     return 0;
   }
 
-  int _resolvedNewContainers() {
-    final total = _resolvedTotalGallons();
+  int _resolvedExchangeContainers() {
+    if (_isBorrowOrder()) return 0;
 
-    final explicit = _order?['new_containers'];
-    if (explicit != null) {
-      final parsed = _toInt(explicit, fallback: 0);
-      return parsed.clamp(0, total).toInt();
+    final total = _resolvedTotalGallons();
+    final explicitExchange = _order?['exchange_containers'];
+
+    if (explicitExchange != null) {
+      final exchange = _toInt(explicitExchange, fallback: 0);
+      if (exchange > 0) return exchange.clamp(0, total).toInt();
+
+      if (_toBool(_order?['with_exchange'])) return total;
+      return 0;
     }
 
-    final exchange = _resolvedExchangeContainers();
-    return (total - exchange).clamp(0, total).toInt();
+    final newContainers = _order?['new_containers'];
+    if (newContainers != null) {
+      final newQuantity = _toInt(newContainers, fallback: total);
+      return (total - newQuantity).clamp(0, total).toInt();
+    }
+
+    if (_toBool(_order?['with_exchange'])) return total;
+    if (_hasTrueValue(_order?['exchange_required'])) return total;
+
+    return 0;
   }
 
   bool _toBool(dynamic value) {
@@ -425,6 +1090,18 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   }
 
   bool _hasTrueValue(dynamic value) => _toBool(value);
+
+  String _containerTypeLabel() {
+    switch (_resolvedDeliveryType()) {
+      case 'with_exchange':
+        return 'With Exchange';
+      case 'borrow_containers':
+        return 'Borrow Container';
+      case 'new_gallons':
+      default:
+        return 'New Container';
+    }
+  }
 
   String _resolvedTotalPayment() {
     final totalPrice = _order?['total_price'];
@@ -473,36 +1150,6 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     return _isValidLatLng(lat, lng);
   }
 
-  bool _isExchangeOrder([Map<String, dynamic>? source]) {
-    final order = source ?? _order ?? const <String, dynamic>{};
-    final total = _toInt(order['gallons'], fallback: widget.totalGallons);
-
-    final explicitExchange = order['exchange_containers'];
-    if (explicitExchange != null) {
-      final exchange = _toInt(explicitExchange, fallback: 0);
-      if (exchange > 0) return true;
-      if (_toBool(order['with_exchange'])) return total > 0;
-      return false;
-    }
-
-    final newContainers = order['new_containers'];
-    if (newContainers != null) {
-      final newQuantity = _toInt(newContainers, fallback: total);
-      return (total - newQuantity) > 0;
-    }
-
-    if (_toBool(order['with_exchange'])) return total > 0;
-
-    // Final compatibility fallback for legacy records.
-    if (_hasTrueValue(order['exchange_required'])) return total > 0;
-
-    if (source == null && _order == null) {
-      return widget.exchangeContainers > 0;
-    }
-
-    return false;
-  }
-
   int _controllerValue(TextEditingController controller) {
     final value = int.tryParse(controller.text.trim());
     return value == null || value < 0 ? 0 : value;
@@ -512,7 +1159,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     Map<String, dynamic> order, {
     required int total,
   }) {
-    // Primary source: the customer's actual exchange quantity.
+    if (_isBorrowOrder(order)) return 0;
+
     final explicit = order['exchange_containers'];
     if (explicit != null) {
       final parsed = _toInt(explicit, fallback: 0);
@@ -521,18 +1169,13 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
       return 0;
     }
 
-    // Compatibility with orders that saved only the new-container quantity.
     final newContainers = order['new_containers'];
     if (newContainers != null) {
       final newQty = _toInt(newContainers, fallback: total);
-      final inferred = total - newQty;
-      return inferred.clamp(0, total).toInt();
+      return (total - newQty).clamp(0, total).toInt();
     }
 
-    // Compatibility with orders that saved the customer's exchange boolean.
     if (_toBool(order['with_exchange'])) return total;
-
-    // Legacy compatibility for the current database structure.
     if (_hasTrueValue(order['exchange_required'])) return total;
 
     if (order.isEmpty && widget.exchangeContainers > 0) {
@@ -651,15 +1294,30 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                     ),
                     const SizedBox(height: 8),
                     _InfoRow(
-                      label: 'Exchange Containers',
-                      value: '${_resolvedExchangeContainers()}',
+                      label: 'Container Type',
+                      value: _containerTypeLabel(),
+                      valueColor: _primaryBlue,
                     ),
                     const SizedBox(height: 8),
-                    _InfoRow(
-                      label: 'New Containers',
-                      value: '${_resolvedNewContainers()}',
-                    ),
-                    const SizedBox(height: 8),
+                    if (_isBorrowOrder()) ...[
+                      _InfoRow(
+                        label: 'Borrow Containers',
+                        value: '${_resolvedBorrowContainers()}',
+                      ),
+                      const SizedBox(height: 8),
+                    ] else if (_isExchangeOrder()) ...[
+                      _InfoRow(
+                        label: 'Exchange Containers',
+                        value: '${_resolvedExchangeContainers()}',
+                      ),
+                      const SizedBox(height: 8),
+                    ] else ...[
+                      _InfoRow(
+                        label: 'New Containers',
+                        value: '${_resolvedTotalGallons()}',
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     _InfoRow(
                       label: 'Total Payment',
                       value: _resolvedTotalPayment(),
@@ -668,10 +1326,18 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                   ],
                 ),
               ),
-              if (_expectedReturnQuantity > 0 &&
+              if (_isExchangeOrder() &&
+                  _expectedReturnQuantity > 0 &&
                   _currentStatus == 'in_progress') ...[
                 const SizedBox(height: 14),
                 _buildContainerReturnCard(),
+              ],
+              // Always show this section while the delivery is in progress.
+              // It lets the driver verify whether the customer has old
+              // borrowed containers, even when the outstanding balance is 0.
+              if (_currentStatus == 'in_progress') ...[
+                const SizedBox(height: 14),
+                _buildPreviousBorrowedReturnCard(),
               ],
               const SizedBox(height: 14),
               _SectionCard(
@@ -975,7 +1641,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Enter what the customer actually returned. Damaged and missing containers must also be accounted for before delivery can be completed.',
+            'Record the empty containers the customer returned for this exchange. Any container not returned must be marked as damaged or missing before delivery can be completed.',
             style: TextStyle(
               fontSize: 12,
               height: 1.45,
@@ -1073,7 +1739,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.10),
+            color: color.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Icon(icon, color: color, size: 20),
@@ -1149,6 +1815,37 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
             ),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+    }
+
+    // Previous borrowed containers are completely separate from the current
+    // order exchange. The customer can return them during any delivery.
+    if (_returnPreviousBorrowed) {
+      final outstanding = _totalOutstandingBorrowed;
+      final accounted = _borrowAccountedQuantity;
+
+      if (accounted <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Please enter how many previous borrowed containers were returned, damaged, or missing.',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (accounted > outstanding) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Borrowed container return cannot exceed $outstanding outstanding container(s).',
+            ),
+            backgroundColor: Colors.red,
           ),
         );
         return;
@@ -1264,6 +1961,21 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     }
   }
 
+  String _resolvedCapacity(Map<String, dynamic> order) {
+    final rawCapacity =
+        order['capacity']?.toString().trim().isNotEmpty == true
+            ? order['capacity'].toString()
+            : (order['product_name']?.toString() ?? '5 gallons');
+
+    final capacityText = rawCapacity.trim().toLowerCase();
+
+    if (capacityText.contains('5')) return '5 gallons';
+    if (capacityText.contains('3')) return '3 gallons';
+    if (capacityText.contains('2')) return '2 gallons';
+
+    return rawCapacity.trim();
+  }
+
   Future<void> _markDelivered(String orderId) async {
     if (!mounted) return;
 
@@ -1281,9 +1993,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
       final supabase = Supabase.instance.client;
 
-      // Always reload the latest order from Supabase before completing it.
-      // The database order is the source of truth for the delivery quantity
-      // and exchange quantity.
+      // Reload the latest order so the database is always the source of truth.
       final orderResponse = await supabase
           .from('orders')
           .select()
@@ -1295,10 +2005,9 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
       }
 
       final freshOrder = Map<String, dynamic>.from(orderResponse);
-
-      // Only exchange_containers (or the compatible new_containers fallback)
-      // determines whether the customer must return containers.
-      final isExchange = _isExchangeOrder(freshOrder);
+      final deliveryType = _resolvedDeliveryType(freshOrder);
+      final isExchange = deliveryType == 'with_exchange';
+      final isBorrow = deliveryType == 'borrow_containers';
 
       final gallons = _toInt(
         freshOrder['gallons'],
@@ -1309,12 +2018,10 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
         throw Exception('Invalid gallon quantity for this order.');
       }
 
-      // ---------------------------------------------------------------
-      // RECORD ACTUAL CONTAINER RETURN / CONDITION
-      // ---------------------------------------------------------------
-      // For exchange orders, the driver must account for every expected
-      // container as returned, damaged, or missing. We never assume that
-      // the full expected quantity was returned.
+      // ===============================================================
+      // WITH EXCHANGE
+      // ===============================================================
+      // Only an actual exchange requires an immediate container return.
       if (isExchange) {
         final expectedReturn = _expectedExchangeQuantity(
           freshOrder,
@@ -1334,7 +2041,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
         if (accounted != expectedReturn) {
           throw Exception(
-            'Container quantities must equal the expected return. Expected $expectedReturn, but $accounted was accounted for.',
+            'Container quantities must equal the expected return. '
+            'Expected $expectedReturn, but $accounted was accounted for.',
           );
         }
 
@@ -1354,27 +2062,15 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
               _toInt(record['missing_quantity'], fallback: 0);
         }
 
-        // If a previous attempt already recorded the complete return, do not
-        // insert another record. This keeps the operation idempotent.
         if (alreadyAccounted == expectedReturn) {
-          // Nothing else is inserted. The existing return record remains the
-          // permanent transaction-history record.
+          // Already recorded completely. Do not create a duplicate.
         } else if (alreadyAccounted > 0) {
           throw Exception(
-            'A partial container return is already recorded for this order. Please contact the station administrator before completing it again.',
+            'A partial container return is already recorded for this order. '
+            'Please contact the station administrator before completing it again.',
           );
         } else {
-          final rawCapacity =
-              freshOrder['capacity']?.toString().trim().isNotEmpty == true
-                  ? freshOrder['capacity'].toString()
-                  : (freshOrder['product_name']?.toString() ?? '5 gallons');
-
-          final capacityText = rawCapacity.trim().toLowerCase();
-          final capacity = capacityText.contains('5')
-              ? '5 gallons'
-              : capacityText.contains('3')
-                  ? '3 gallons'
-                  : rawCapacity.trim();
+          final capacity = _resolvedCapacity(freshOrder);
 
           await supabase.from('container_returns').insert({
             'order_id': orderId,
@@ -1392,15 +2088,101 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
         }
       }
 
-      // ---------------------------------------------------------------
-      // COMPLETE THE ORDER
-      // ---------------------------------------------------------------
+      // ===============================================================
+      // BORROW CONTAINER
+      // ===============================================================
+      // Borrowing is NOT an immediate return. The customer can return the
+      // borrowed container on a later transaction.
+      if (isBorrow) {
+        final borrowQuantity = _toInt(
+          freshOrder['borrow_containers'],
+          fallback: 0,
+        );
+
+        if (borrowQuantity <= 0) {
+          throw Exception(
+            'This borrow order has no borrowed-container quantity.',
+          );
+        }
+
+        final existingBorrowings = await supabase
+            .from('container_borrowings')
+            .select('id')
+            .eq('order_id', orderId);
+
+        if ((existingBorrowings as List<dynamic>).isEmpty) {
+          final capacity = _resolvedCapacity(freshOrder);
+
+          String? deliveryId;
+          try {
+            final deliveryResponse = await supabase
+                .from('deliveries')
+                .select('id')
+                .eq('order_id', orderId)
+                .limit(1)
+                .maybeSingle();
+
+            deliveryId = deliveryResponse?['id']?.toString();
+          } catch (e) {
+            debugPrint('Delivery lookup for borrowing skipped: $e');
+          }
+
+          await supabase.from('container_borrowings').insert({
+            'order_id': orderId,
+            'delivery_id': deliveryId,
+            'customer_id': freshOrder['customer_id']?.toString() ?? '',
+            'customer_name': freshOrder['customer_name'],
+            'capacity': capacity,
+            'quantity': borrowQuantity,
+            'returned_quantity': 0,
+            'damaged_quantity': 0,
+            'missing_quantity': 0,
+            'status': 'borrowed',
+            'notes':
+                'Container borrowed by customer and recorded during delivery completion.',
+            'borrowed_at': DateTime.now().toIso8601String(),
+          });
+        }
+
+        // Synchronize the order borrowing status.
+        await supabase.from('orders').update({
+          'borrow_containers': borrowQuantity,
+          'borrow_status': 'borrowed',
+        }).eq('id', orderId);
+
+        // Synchronize delivery_type when a delivery record already exists.
+        try {
+          await supabase
+              .from('deliveries')
+              .update({'delivery_type': 'borrow_containers'})
+              .eq('order_id', orderId);
+        } catch (e) {
+          debugPrint('Delivery type sync skipped: $e');
+        }
+      }
+
+      // ===============================================================
+      // PREVIOUS BORROWED-CONTAINER RETURN
+      // ===============================================================
+      // This is intentionally independent from the current order's
+      // delivery_type. It updates older customer borrowing records.
+      if (_returnPreviousBorrowed) {
+        await _recordPreviousBorrowedReturns(
+          supabase: supabase,
+          customerId: freshOrder['customer_id']?.toString() ?? '',
+          currentOrderId: orderId,
+          driverId: driverId,
+        );
+      }
+
+      // ===============================================================
+      // COMPLETE ORDER
+      // ===============================================================
       await supabase
           .from('orders')
           .update({'status': 'delivered'})
           .eq('id', orderId);
 
-      // Driver is available again after completing the delivery.
       await supabase
           .from('employees')
           .update({'status': 'active'})
@@ -1408,30 +2190,40 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
       if (!mounted) return;
 
+      final previousBorrowReturnCount = _borrowReturnQuantity;
+      final hadPreviousBorrowReturn = _returnPreviousBorrowed;
+
       setState(() {
         _order = {
           ...freshOrder,
           'status': 'delivered',
+          if (isBorrow) 'borrow_status': 'borrowed',
         };
         _currentStatus = 'delivered';
         _isLoading = false;
+        _returnPreviousBorrowed = false;
       });
 
       widget.onOrderCompleted?.call();
 
+      final previousBorrowReturnMessage = hadPreviousBorrowReturn
+          ? ' $previousBorrowReturnCount previous borrowed container(s) returned.'
+          : '';
+
+      final message = isExchange
+          ? 'Delivery completed. Empty containers were recorded as returned, damaged, or missing.$previousBorrowReturnMessage'
+          : isBorrow
+              ? 'Delivery completed. ${_toInt(freshOrder['borrow_containers'], fallback: 0)} borrowed container(s) were recorded.$previousBorrowReturnMessage'
+              : 'Delivery completed successfully.$previousBorrowReturnMessage';
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            isExchange
-                ? 'Delivery completed. Empty containers returned to inventory.'
-                : 'Delivery completed successfully.',
-          ),
+          content: Text(message),
           backgroundColor: const Color(0xFF16A34A),
-          duration: const Duration(seconds: 2),
+          duration: const Duration(seconds: 3),
         ),
       );
 
-      // Give the success message a moment to appear before returning.
       await Future<void>.delayed(const Duration(milliseconds: 350));
 
       if (!mounted) return;

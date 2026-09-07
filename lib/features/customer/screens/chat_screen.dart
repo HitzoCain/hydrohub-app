@@ -577,7 +577,7 @@ class _ChatScreenState extends State<ChatScreen> {
         return _driverName;
 
       case 'admin':
-        return 'Aqua in Lavada • Station Support';
+        return 'Aqua In Lavada • Station Support';
 
       default:
         return 'Unknown Sender';
@@ -741,7 +741,7 @@ class _ChatScreenState extends State<ChatScreen> {
   PreferredSizeWidget _buildAppBar() {
     final title =
         _isSupportConversation
-            ? 'Aqua in Lavada'
+            ? 'Aqua In Lavada'
             : _driverName;
 
     final subtitle =
@@ -966,7 +966,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    'Aqua in Lavada • General Assistance',
+                    'Aqua In Lavada • General Assistance',
                     style: TextStyle(
                       fontSize: 12,
                       color: _textGray,

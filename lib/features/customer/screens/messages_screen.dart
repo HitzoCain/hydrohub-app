@@ -511,7 +511,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             ConversationData(
               id: supportId,
               orderId: null,
-              name: 'Aqua in Lavada',
+              name: 'Aqua In Lavada',
               lastMessage:
                   supportLastMessage.isEmpty
                       ? 'Contact the station for assistance'

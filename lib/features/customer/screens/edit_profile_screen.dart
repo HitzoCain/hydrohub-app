@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
 
 class EditProfileScreen extends StatefulWidget {
-  const EditProfileScreen({super.key, this.initialName = 'Juan Dela Cruz'});
+  const EditProfileScreen({
+    super.key,
+    this.initialName = 'Juan Dela Cruz',
+    this.initialPhone = '',
+  });
 
   final String initialName;
+  final String initialPhone;
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -14,6 +21,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   static const Color _background = Color(0xFFF6F8FB);
 
   late final TextEditingController _nameController;
+  late final TextEditingController _phoneController;
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   bool _isSaving = false;
 
@@ -21,11 +29,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.initialName);
+    _phoneController = TextEditingController(text: widget.initialPhone);
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _phoneController.dispose();
     super.dispose();
   }
 
@@ -35,26 +45,76 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
 
+    final newName = _nameController.text.trim();
+    final newPhone = _phoneController.text.trim();
+
     setState(() {
       _isSaving = true;
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 800));
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
+        if (!mounted) return;
+        setState(() {
+          _isSaving = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error: User not authenticated'),
+            backgroundColor: Color(0xFFDC2626),
+          ),
+        );
+        return;
+      }
 
-    if (!mounted) return;
+      // Update the customer profile in Supabase
+      try {
+        await Supabase.instance.client
+            .from('customer_profiles')
+            .update({'name': newName, 'phone': newPhone})
+            .eq('user_id', user.id);
+      } catch (dbError) {
+        debugPrint('Database update error: $dbError');
+        throw Exception('Failed to update profile in database: $dbError');
+      }
 
-    setState(() {
-      _isSaving = false;
-    });
+      // Update the local session
+      await CustomerSession.save(
+        customerId: user.id,
+        customerName: newName,
+        customerPhone: newPhone,
+        customerAddress: CustomerSession.address,
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Profile updated successfully'),
-        backgroundColor: Color(0xFF16A34A),
-      ),
-    );
+      if (!mounted) return;
 
-    Navigator.of(context).pop(_nameController.text.trim());
+      setState(() {
+        _isSaving = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile updated successfully'),
+          backgroundColor: Color(0xFF16A34A),
+        ),
+      );
+
+      Navigator.of(context).pop(newName);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isSaving = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating profile: ${e.toString()}'),
+          backgroundColor: const Color(0xFFDC2626),
+        ),
+      );
+    }
   }
 
   @override
@@ -155,6 +215,50 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           return null;
                         },
                       ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Phone Number',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF475569),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: _phoneController,
+                        keyboardType: TextInputType.phone,
+                        textInputAction: TextInputAction.done,
+                        decoration: InputDecoration(
+                          hintText: '09171234567',
+                          filled: true,
+                          fillColor: const Color(0xFFF8FAFC),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 14,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFE2E8F0),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: _primaryBlue,
+                              width: 1.4,
+                            ),
+                          ),
+                        ),
+                        validator: (value) {
+                          final phone = value?.trim() ?? '';
+                          if (!RegExp(r'^09\d{9}$').hasMatch(phone)) {
+                            return 'Use a valid Philippine mobile number';
+                          }
+                          return null;
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -178,8 +282,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             height: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(Colors.white),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
                             ),
                           )
                         : const Text(

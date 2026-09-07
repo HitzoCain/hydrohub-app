@@ -37,12 +37,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return const _ProfileData(
         name: 'Customer',
         email: 'No email',
+        phone: '',
         totalOrders: 0,
         activeOrders: 0,
       );
     }
 
     var name = (user.userMetadata?['full_name'] as String?)?.trim() ?? '';
+    var phone = '';
     final email = (user.email ?? '').trim().isNotEmpty
         ? (user.email ?? '').trim()
         : 'No email';
@@ -50,7 +52,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final profile = await Supabase.instance.client
           .from('customer_profiles')
-          .select('name')
+          .select('name, phone')
           .eq('user_id', user.id)
           .maybeSingle();
 
@@ -58,6 +60,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (profileName.isNotEmpty) {
         name = profileName;
       }
+      phone = profile?['phone']?.toString().trim() ?? '';
     } catch (e) {
       debugPrint('Failed to load customer profile name: $e');
     }
@@ -105,17 +108,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return _ProfileData(
       name: name,
       email: email,
+      phone: phone,
       totalOrders: totalOrders,
       activeOrders: activeOrders,
     );
   }
 
   void _refreshProfile() {
-    setState(() {
-      _profileFuture = _loadProfileData();
+    // Add a small delay to ensure database changes are committed
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        setState(() {
+          _profileFuture = _loadProfileData();
+        });
+      }
     });
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -135,10 +143,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: FutureBuilder<_ProfileData>(
           future: _profileFuture,
           builder: (context, snapshot) {
-            final profile = snapshot.data ??
+            final profile =
+                snapshot.data ??
                 const _ProfileData(
                   name: 'Customer',
                   email: 'No email',
+                  phone: '',
                   totalOrders: 0,
                   activeOrders: 0,
                 );
@@ -153,7 +163,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   activeOrders: profile.activeOrders,
                 ),
                 const SizedBox(height: 16),
-                _AccountOptionsSection(onProfileUpdated: _refreshProfile),
+                _AccountOptionsSection(
+                  currentName: profile.name,
+                  currentPhone: profile.phone,
+                  onProfileUpdated: _refreshProfile,
+                ),
                 const SizedBox(height: 20),
                 const _LogoutButton(),
               ],
@@ -203,10 +217,7 @@ class _ProfileHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            email,
-            style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
-          ),
+          Text(email, style: TextStyle(fontSize: 13, color: Color(0xFF64748B))),
         ],
       ),
     );
@@ -297,8 +308,14 @@ class _InfoCard extends StatelessWidget {
 }
 
 class _AccountOptionsSection extends StatelessWidget {
-  const _AccountOptionsSection({required this.onProfileUpdated});
+  const _AccountOptionsSection({
+    required this.currentName,
+    required this.currentPhone,
+    required this.onProfileUpdated,
+  });
 
+  final String currentName;
+  final String currentPhone;
   final VoidCallback onProfileUpdated;
 
   @override
@@ -319,12 +336,15 @@ class _AccountOptionsSection extends StatelessWidget {
         children: [
           _OptionTile(
             icon: Icons.edit_outlined,
-            label: 'Edit Name',
+            label: 'Edit Profile',
             onTap: () async {
               await Navigator.push(
                 context,
                 MaterialPageRoute<void>(
-                  builder: (_) => const EditProfileScreen(),
+                  builder: (_) => EditProfileScreen(
+                    initialName: currentName,
+                    initialPhone: currentPhone,
+                  ),
                 ),
               );
               onProfileUpdated();
@@ -337,9 +357,7 @@ class _AccountOptionsSection extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute<void>(
-                  builder: (_) => const AddressScreen(),
-                ),
+                MaterialPageRoute<void>(builder: (_) => const AddressScreen()),
               );
             },
           ),
@@ -350,9 +368,7 @@ class _AccountOptionsSection extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute<void>(
-                  builder: (_) => const SupportScreen(),
-                ),
+                MaterialPageRoute<void>(builder: (_) => const SupportScreen()),
               );
             },
           ),
@@ -366,12 +382,14 @@ class _ProfileData {
   const _ProfileData({
     required this.name,
     required this.email,
+    required this.phone,
     required this.totalOrders,
     required this.activeOrders,
   });
 
   final String name;
   final String email;
+  final String phone;
   final int totalOrders;
   final int activeOrders;
 }
