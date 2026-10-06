@@ -1,10 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/customer_profile_completion_screen.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/login_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_shell.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
+import 'package:aqua_in_laba_app/services/app_update_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,6 +51,32 @@ class _AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<_AuthGate> {
+  final _appUpdateService = AppUpdateService();
+
+  @override
+  void initState() {
+    super.initState();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkForUpdate();
+      });
+    }
+  }
+
+  Future<void> _checkForUpdate() async {
+    try {
+      final update = await _appUpdateService.checkForUpdate();
+      if (!mounted || update == null) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) =>
+            _AppUpdateDialog(update: update, service: _appUpdateService),
+      );
+    } catch (error) {
+      debugPrint('App update check skipped: $error');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = Supabase.instance.client.auth;
@@ -73,6 +103,157 @@ class _AuthGateState extends State<_AuthGate> {
           user: session.user,
         );
       },
+    );
+  }
+}
+
+class _AppUpdateDialog extends StatefulWidget {
+  const _AppUpdateDialog({required this.update, required this.service});
+
+  final AppUpdate update;
+  final AppUpdateService service;
+
+  @override
+  State<_AppUpdateDialog> createState() => _AppUpdateDialogState();
+}
+
+class _AppUpdateDialogState extends State<_AppUpdateDialog> {
+  File? _verifiedApk;
+  String? _error;
+  int _received = 0;
+  bool _isDownloading = false;
+  bool _isInstalling = false;
+
+  Future<void> _downloadUpdate() async {
+    setState(() {
+      _isDownloading = true;
+      _error = null;
+      _received = 0;
+    });
+    try {
+      final apk = await widget.service.downloadAndVerify(
+        widget.update,
+        onProgress: (received, _) {
+          if (mounted) setState(() => _received = received);
+        },
+      );
+      if (mounted) setState(() => _verifiedApk = apk);
+    } catch (error) {
+      if (mounted) setState(() => _error = 'Download or verification failed.');
+      debugPrint('App update download failed: $error');
+    } finally {
+      if (mounted) setState(() => _isDownloading = false);
+    }
+  }
+
+  Future<void> _installUpdate() async {
+    final apk = _verifiedApk;
+    if (apk == null) return;
+    setState(() {
+      _isInstalling = true;
+      _error = null;
+    });
+    try {
+      if (!await widget.service.canInstallPackages()) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Allow app installation'),
+            content: const Text(
+              'Android needs permission to install this update. Enable it in Settings, return here, then tap Install update again.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  await widget.service.openInstallPermissionSettings();
+                  if (context.mounted) Navigator.pop(context);
+                },
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+      await widget.service.installApk(apk);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'Android could not open the installer.');
+      }
+      debugPrint('App update installer failed: $error');
+    } finally {
+      if (mounted) setState(() => _isInstalling = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = widget.update.apkSize == 0
+        ? null
+        : (_received / widget.update.apkSize).clamp(0.0, 1.0);
+
+    return AlertDialog(
+      title: Text('Update available: ${widget.update.versionName}'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.update.releaseNotes.isNotEmpty)
+            Text(widget.update.releaseNotes),
+          if (_isDownloading) ...[
+            const SizedBox(height: 20),
+            LinearProgressIndicator(value: progress),
+            const SizedBox(height: 8),
+            Text(
+              '${(_received / (1024 * 1024)).toStringAsFixed(1)} MB downloaded',
+            ),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isDownloading || _isInstalling
+              ? null
+              : () => Navigator.pop(context),
+          child: const Text('Later'),
+        ),
+        FilledButton.icon(
+          onPressed: _isDownloading || _isInstalling
+              ? null
+              : _verifiedApk == null
+              ? _downloadUpdate
+              : _installUpdate,
+          icon: _isDownloading || _isInstalling
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  _verifiedApk == null ? Icons.download : Icons.install_mobile,
+                ),
+          label: Text(
+            _isDownloading
+                ? 'Downloading'
+                : _isInstalling
+                ? 'Opening installer'
+                : _verifiedApk == null
+                ? 'Download update'
+                : 'Install update',
+          ),
+        ),
+      ],
     );
   }
 }

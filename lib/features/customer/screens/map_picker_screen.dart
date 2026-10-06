@@ -39,7 +39,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
             children: [
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.aqua_in_laba_app',
+                userAgentPackageName: 'io.github.hitzocain.aquainlavada',
               ),
               if (selectedLatLng != null)
                 MarkerLayer(

@@ -16,3 +16,5 @@ For help getting started with Flutter development, view the
 samples, guidance on mobile development, and a full API reference.
 
 For customer email verification setup, see [CUSTOMER_EMAIL_OTP_GUIDE.md](CUSTOMER_EMAIL_OTP_GUIDE.md).
+
+For Android APK signing and safe GitHub release updates, see [ANDROID_UPDATES.md](ANDROID_UPDATES.md).
