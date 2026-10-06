@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 import 'package:aqua_in_laba_app/features/driver/services/driver_location_service.dart';
@@ -20,23 +22,47 @@ class DriverDashboardScreen extends StatefulWidget {
 }
 
 class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
-  Future<int> _deliveriesTodayFuture = Future<int>.value(0);
-  Future<int> _completedDeliveriesFuture = Future<int>.value(0);
+  Future<Map<String, int>> _orderStatusCountsFuture =
+      Future<Map<String, int>>.value(const <String, int>{
+        'live': 0,
+        'cancelled': 0,
+        'completed': 0,
+      });
   Future<String> _headerSubtitleFuture = Future<String>.value('');
+  Future<String> _driverAvatarFuture = Future<String>.value('');
   Future<List<_DeliveryData>> _activeOrdersFuture =
       Future<List<_DeliveryData>>.value(const <_DeliveryData>[]);
-  List<_DeliveryData> _activeOrders = const <_DeliveryData>[];
 
   late DriverLocationService _locationService;
 
-  static const Color _bg = Color(0xFFF0F4FA);
   static const Color _primary = Color(0xFF2563EB);
 
   @override
   void initState() {
     super.initState();
     _initializeLocationService();
+    _driverAvatarFuture = _loadDriverAvatar();
     loadDashboard();
+  }
+
+  Future<String> _loadDriverAvatar() async {
+    final widgetDriverId = widget.driverId?.trim();
+    final driverId = widgetDriverId?.isNotEmpty == true
+        ? widgetDriverId!
+        : (await DriverSession.getDriverId())?.trim() ?? '';
+    if (driverId.isEmpty) return '';
+
+    try {
+      final profile = await Supabase.instance.client
+          .from('employees')
+          .select('profile_image_url')
+          .eq('id', driverId)
+          .maybeSingle();
+      return profile?['profile_image_url']?.toString().trim() ?? '';
+    } catch (error) {
+      debugPrint('Failed to load driver dashboard photo: $error');
+      return '';
+    }
   }
 
   Future<List<String>> _currentDriverIds() async {
@@ -72,52 +98,48 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
   void loadDashboard() {
     final activeOrdersFuture = _fetchActiveOrders();
+    final orderStatusCountsFuture = _fetchOrderStatusCounts();
 
     setState(() {
-      _deliveriesTodayFuture = _fetchDeliveriesToday();
-      _completedDeliveriesFuture = _fetchCompletedDeliveries();
+      _orderStatusCountsFuture = orderStatusCountsFuture;
       _headerSubtitleFuture = _fetchHeaderSubtitle();
       _activeOrdersFuture = activeOrdersFuture;
     });
-
-    activeOrdersFuture.then((response) {
-      if (!mounted) return;
-      setState(() {
-        _activeOrders = response;
-      });
-    });
   }
 
-  Future<int> _fetchDeliveriesToday() async {
-    final driverId = await DriverSession.getDriverId();
-    if (driverId == null || driverId.trim().isEmpty) {
-      return 0;
+  Future<Map<String, int>> _fetchOrderStatusCounts() async {
+    final driverIds = await _currentDriverIds();
+    final counts = <String, int>{'live': 0, 'cancelled': 0, 'completed': 0};
+    if (driverIds.isEmpty) return counts;
+
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month).toUtc().toIso8601String();
+    final nextMonthStart = DateTime(
+      now.year,
+      now.month + 1,
+    ).toUtc().toIso8601String();
+
+    final orders = await Supabase.instance.client
+        .from('orders')
+        .select('status')
+        .inFilter('driver_id', driverIds)
+        .gte('created_at', monthStart)
+        .lt('created_at', nextMonthStart);
+
+    for (final order in orders.whereType<Map<String, dynamic>>()) {
+      final status = order['status']?.toString().toLowerCase().trim() ?? '';
+      if (status == 'assigned' ||
+          status == 'in_progress' ||
+          status == 'on_the_way') {
+        counts['live'] = counts['live']! + 1;
+      } else if (status == 'cancelled' || status == 'canceled') {
+        counts['cancelled'] = counts['cancelled']! + 1;
+      } else if (status == 'delivered' || status == 'completed') {
+        counts['completed'] = counts['completed']! + 1;
+      }
     }
 
-    final today = DateTime.now().toIso8601String().split('T')[0];
-
-    final response = await Supabase.instance.client
-        .from('orders')
-        .select()
-        .eq('driver_id', driverId)
-        .gte('created_at', today);
-
-    return response.length;
-  }
-
-  Future<int> _fetchCompletedDeliveries() async {
-    final driverId = await DriverSession.getDriverId();
-    if (driverId == null || driverId.trim().isEmpty) {
-      return 0;
-    }
-
-    final response = await Supabase.instance.client
-        .from('orders')
-        .select()
-        .eq('driver_id', driverId)
-        .eq('status', 'delivered');
-
-    return response.length;
+    return counts;
   }
 
   Future<String> _fetchHeaderSubtitle() async {
@@ -166,33 +188,35 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         ? await activeOrdersQuery.eq('driver_id', driverIds.first)
         : await activeOrdersQuery.inFilter('driver_id', driverIds);
 
+    final customerIds = activeOrders
+        .whereType<Map<String, dynamic>>()
+        .map((order) => order['customer_id']?.toString().trim() ?? '')
+        .where((customerId) => customerId.isNotEmpty)
+        .toSet()
+        .toList();
+    final customerAvatarUrls = <String, String>{};
+    if (customerIds.isNotEmpty) {
+      try {
+        final profiles = await Supabase.instance.client
+            .from('customer_profiles')
+            .select('user_id, avatar_url')
+            .inFilter('user_id', customerIds);
+        for (final profile in profiles.whereType<Map<String, dynamic>>()) {
+          final userId = profile['user_id']?.toString().trim() ?? '';
+          final avatarUrl = profile['avatar_url']?.toString().trim() ?? '';
+          if (userId.isNotEmpty && avatarUrl.isNotEmpty) {
+            customerAvatarUrls[userId] = avatarUrl;
+          }
+        }
+      } catch (error) {
+        debugPrint('Failed to load active delivery customer photos: $error');
+      }
+    }
+
     String textOf(dynamic value, {required String fallback}) {
       final text = value?.toString().trim();
       if (text == null || text.isEmpty) return fallback;
       return text;
-    }
-
-    double? toDouble(dynamic value) {
-      if (value is double) return value;
-      if (value is int) return value.toDouble();
-      if (value is num) return value.toDouble();
-      if (value is String) return double.tryParse(value);
-      return null;
-    }
-
-    String displayAddressOf(Map<String, dynamic> row) {
-      final addressText = row['address_text']?.toString().trim();
-      if (addressText != null && addressText.isNotEmpty) {
-        return addressText;
-      }
-
-      final lat = toDouble(row['latitude']);
-      final lng = toDouble(row['longitude']);
-      if (lat != null && lng != null) {
-        return 'Lat: ${lat.toStringAsFixed(6)}, Lng: ${lng.toStringAsFixed(6)}';
-      }
-
-      return textOf(row['address'], fallback: 'No address provided');
     }
 
     String statusOf(dynamic value) {
@@ -209,14 +233,19 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     }
 
     return activeOrders.whereType<Map<String, dynamic>>().map((order) {
-      final orderId = textOf(order['id'], fallback: 'Unknown');
       final customerName = textOf(order['customer_name'], fallback: 'Customer');
-      final address = displayAddressOf(order);
+      final createdAt = DateTime.tryParse(
+        order['created_at']?.toString() ?? '',
+      );
+      final deliveryDate = createdAt == null
+          ? 'Date unavailable'
+          : DateFormat('MMM d').format(createdAt.toLocal());
 
       return _DeliveryData(
-        orderId: orderId,
         customerName: customerName,
-        address: address,
+        avatarUrl:
+            customerAvatarUrls[order['customer_id']?.toString().trim()] ?? '',
+        date: deliveryDate,
         status: statusOf(order['status']),
       );
     }).toList();
@@ -225,41 +254,52 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _bg,
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 16),
-          children: [
-            _TopBar(
-              driverName: widget.driverName ?? DriverSession.name,
-              subtitleFuture: _headerSubtitleFuture,
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: [
-                  const SizedBox(height: 16),
-                  const _StatusPill(),
-                  const SizedBox(height: 16),
-                  _StatsRow(
-                    deliveriesTodayFuture: _deliveriesTodayFuture,
-                    completedDeliveriesFuture: _completedDeliveriesFuture,
-                  ),
-                  const SizedBox(height: 14),
-                  const _HeroActionCard(),
-                  const SizedBox(height: 14),
-                  _activeOrders.isNotEmpty
-                      ? const _RouteProgressCard()
-                      : const _NoActiveRouteCard(),
-                  const SizedBox(height: 14),
-                  _ActiveDeliveriesCard(
-                    activeOrdersFuture: _activeOrdersFuture,
-                  ),
-                ],
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned.fill(
+            child: ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 1.2, sigmaY: 1.2),
+              child: Image.asset(
+                'assets/images/background.jpg',
+                fit: BoxFit.cover,
               ),
             ),
-          ],
-        ),
+          ),
+          const ColoredBox(color: Color(0x22081D35)),
+          SafeArea(
+            child: Column(
+              children: [
+                _TopBar(
+                  driverName: widget.driverName ?? DriverSession.name,
+                  subtitleFuture: _headerSubtitleFuture,
+                  avatarUrlFuture: _driverAvatarFuture,
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                    child: Column(
+                      children: [
+                        const _StatusPill(),
+                        const SizedBox(height: 14),
+                        _StatsRow(statusCountsFuture: _orderStatusCountsFuture),
+                        const SizedBox(height: 14),
+                        const _HeroActionCard(),
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child: _ActiveDeliveriesCard(
+                            activeOrdersFuture: _activeOrdersFuture,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: 0,
@@ -330,17 +370,15 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({this.driverName, required this.subtitleFuture});
+  const _TopBar({
+    this.driverName,
+    required this.subtitleFuture,
+    required this.avatarUrlFuture,
+  });
 
   final String? driverName;
   final Future<String> subtitleFuture;
-
-  String _salutation() {
-    final hour = DateTime.now().hour;
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    return 'Good evening';
-  }
+  final Future<String> avatarUrlFuture;
 
   @override
   Widget build(BuildContext context) {
@@ -366,122 +404,82 @@ class _TopBar extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2563EB).withValues(alpha: 0.20),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.local_shipping_rounded,
-                  color: Colors.white,
-                  size: 24,
-                ),
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: const Color(0xFF2563EB).withValues(alpha: 0.20),
+              shape: BoxShape.circle,
+            ),
+            child: ClipOval(
+              child: FutureBuilder<String>(
+                future: avatarUrlFuture,
+                builder: (context, snapshot) {
+                  final avatarUrl = snapshot.data?.trim() ?? '';
+                  if (avatarUrl.isEmpty) {
+                    return const Icon(
+                      Icons.person_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    );
+                  }
+                  return Image.network(
+                    avatarUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => const Icon(
+                      Icons.person_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  );
+                },
               ),
-              const Spacer(),
-              const _NotificationBell(),
-              const SizedBox(width: 8),
-              const _Avatar(),
-            ],
-          ),
-          Text(
-            '${_salutation()}, $resolvedName 👋',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 21,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
-              height: 1.05,
             ),
           ),
-          const SizedBox(height: 4),
-          FutureBuilder<String>(
-            future: subtitleFuture,
-            builder: (context, snapshot) {
-              final subtitle =
-                  (snapshot.data == null || snapshot.data!.trim().isEmpty)
-                  ? DateFormat('EEEE').format(DateTime.now())
-                  : snapshot.data!;
-
-              return Text(
-                subtitle,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xFFCBD5E1),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  resolvedName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    height: 1.05,
+                  ),
                 ),
-              );
-            },
+                const SizedBox(height: 4),
+                FutureBuilder<String>(
+                  future: subtitleFuture,
+                  builder: (context, snapshot) {
+                    final subtitle =
+                        (snapshot.data == null || snapshot.data!.trim().isEmpty)
+                        ? DateFormat('EEEE').format(DateTime.now())
+                        : snapshot.data!;
+
+                    return Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFFCBD5E1),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _NotificationBell extends StatelessWidget {
-  const _NotificationBell();
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        IconButton(
-          onPressed: () {},
-          icon: const Icon(
-            Icons.notifications_none_rounded,
-            color: Color(0xFF334155),
-            size: 22,
-          ),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-        ),
-        Positioned(
-          top: 6,
-          right: 6,
-          child: Container(
-            width: 9,
-            height: 9,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEF4444),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 1.5),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _Avatar extends StatelessWidget {
-  const _Avatar();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(
-          colors: [Color(0xFF1E40AF), Color(0xFF3B82F6)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: const Icon(
-        Icons.person_outline_rounded,
-        color: Colors.white,
-        size: 20,
       ),
     );
   }
@@ -529,132 +527,164 @@ class _StatusPill extends StatelessWidget {
 }
 
 class _StatsRow extends StatelessWidget {
-  const _StatsRow({
-    required this.deliveriesTodayFuture,
-    required this.completedDeliveriesFuture,
-  });
+  const _StatsRow({required this.statusCountsFuture});
 
-  final Future<int> deliveriesTodayFuture;
-  final Future<int> completedDeliveriesFuture;
+  final Future<Map<String, int>> statusCountsFuture;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: FutureBuilder<int>(
-            future: deliveriesTodayFuture,
-            builder: (context, snapshot) {
-              final value = snapshot.data ?? 0;
-              return _StatCard(
-                value: '$value',
-                label: 'Deliveries Today',
-                sub: 'Live from orders',
-                iconBg: const Color(0xFFEFF6FF),
-                icon: Icons.local_shipping_outlined,
-                iconColor: const Color(0xFF2563EB),
-                valueColor: const Color(0xFF0A1628),
-                subColor: const Color(0xFF16A34A),
-              );
-            },
+    return FutureBuilder<Map<String, int>>(
+      future: statusCountsFuture,
+      builder: (context, snapshot) {
+        final counts = snapshot.data ?? const <String, int>{};
+        final liveCount = counts['live'] ?? 0;
+        final cancelledCount = counts['cancelled'] ?? 0;
+        final completedCount = counts['completed'] ?? 0;
+        final totalCount = liveCount + cancelledCount + completedCount;
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.24),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.36)),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _StatusGauge(
+                      value: liveCount,
+                      progress: totalCount == 0 ? 0 : liveCount / totalCount,
+                      label: 'Live Orders',
+                      color: const Color(0xFF168FC4),
+                    ),
+                  ),
+                  Expanded(
+                    child: _StatusGauge(
+                      value: cancelledCount,
+                      progress: totalCount == 0
+                          ? 0
+                          : cancelledCount / totalCount,
+                      label: 'Cancelled',
+                      color: const Color(0xFFE45C57),
+                      monthLabel: DateFormat(
+                        'MMMM yyyy',
+                      ).format(DateTime.now()),
+                    ),
+                  ),
+                  Expanded(
+                    child: _StatusGauge(
+                      value: completedCount,
+                      progress: totalCount == 0
+                          ? 0
+                          : completedCount / totalCount,
+                      label: 'Completed',
+                      color: const Color(0xFF55A936),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: FutureBuilder<int>(
-            future: completedDeliveriesFuture,
-            builder: (context, snapshot) {
-              final completedCount = snapshot.data ?? 0;
-              return _StatCard(
-                value: '$completedCount',
-                label: 'Completed',
-                sub: 'Live delivered count',
-                iconBg: const Color(0xFFF0FDF4),
-                icon: Icons.check_circle_outline_rounded,
-                iconColor: const Color(0xFF16A34A),
-                valueColor: const Color(0xFF16A34A),
-                subColor: const Color(0xFF16A34A),
-              );
-            },
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 }
 
-class _StatCard extends StatelessWidget {
-  const _StatCard({
+class _StatusGauge extends StatelessWidget {
+  const _StatusGauge({
     required this.value,
+    required this.progress,
     required this.label,
-    required this.sub,
-    required this.iconBg,
-    required this.icon,
-    required this.iconColor,
-    required this.valueColor,
-    required this.subColor,
+    required this.color,
+    this.monthLabel,
   });
 
-  final String value;
+  final int value;
+  final double progress;
   final String label;
-  final String sub;
-  final Color iconBg;
-  final IconData icon;
-  final Color iconColor;
-  final Color valueColor;
-  final Color subColor;
+  final Color color;
+  final String? monthLabel;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE8EDF5), width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: iconBg,
-              borderRadius: BorderRadius.circular(10),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 20,
+          child: monthLabel == null
+              ? null
+              : Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      monthLabel!,
+                      maxLines: 1,
+                      style: const TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF1D4ED8),
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+        SizedBox(
+          width: 78,
+          height: 78,
+          child: Padding(
+            padding: const EdgeInsets.all(7),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox.expand(
+                  child: CircularProgressIndicator(
+                    value: progress,
+                    strokeWidth: 6,
+                    strokeCap: StrokeCap.round,
+                    backgroundColor: color.withValues(alpha: 0.18),
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  ),
+                ),
+                Text(
+                  '$value',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                    height: 1,
+                  ),
+                ),
+              ],
             ),
-            child: Icon(icon, color: iconColor, size: 18),
           ),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
-              color: valueColor,
-              height: 1,
-            ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 11,
+            color: Color(0xFF0F172A),
+            fontWeight: FontWeight.w700,
           ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 11,
-              color: Color(0xFF8898B0),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            sub,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: subColor,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -668,261 +698,132 @@ class _HeroActionCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(20),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(20),
         decoration: const BoxDecoration(color: Color(0xFF0F172A)),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -30,
-              top: -30,
-              child: Container(
-                width: 140,
-                height: 140,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.blue.withValues(alpha: 0.12),
-                ),
-              ),
-            ),
-            Positioned(
-              right: 20,
-              top: 30,
-              child: Container(
-                width: 70,
-                height: 70,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.blue.withValues(alpha: 0.10),
-                ),
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
               children: [
-                const Text(
-                  'QUICK ACTION',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF60A5FA),
-                    letterSpacing: 1.2,
+                Positioned(
+                  top: 0,
+                  bottom: 0,
+                  right: 0,
+                  width: constraints.maxWidth * 0.58,
+                  child: Image.asset(
+                    'assets/images/driverdesigndashboard.jpg',
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
                   ),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'View Your\nAssigned Orders',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    height: 1.3,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                InkWell(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => const DriverOrdersScreen(),
-                      ),
-                    );
-                  },
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 11,
-                    ),
+                Positioned.fill(
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2563EB),
-                      borderRadius: BorderRadius.circular(12),
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          const Color(0xFF0F172A),
+                          const Color(0xFF0F172A).withValues(alpha: 0.96),
+                          const Color(0xFF0F172A).withValues(alpha: 0.45),
+                          const Color(0xFF0F172A).withValues(alpha: 0),
+                        ],
+                        stops: const [0, 0.28, 0.55, 0.9],
+                      ),
                     ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: constraints.maxWidth * 0.62,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'See All Orders',
+                        const Text(
+                          'QUICK ACTION',
                           style: TextStyle(
-                            fontSize: 13,
+                            fontSize: 11,
                             fontWeight: FontWeight.w700,
-                            color: Colors.white,
+                            color: Color(0xFF60A5FA),
+                            letterSpacing: 1.2,
                           ),
                         ),
-                        SizedBox(width: 8),
-                        Icon(
-                          Icons.arrow_forward_rounded,
-                          color: Colors.white,
-                          size: 14,
+                        const SizedBox(height: 8),
+                        const Text(
+                          'View Your\nAssigned Orders',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                            height: 1.3,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        InkWell(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute<void>(
+                                builder: (_) => const DriverOrdersScreen(),
+                              ),
+                            );
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 11,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2563EB),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'See All Orders',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(width: 8),
+                                Icon(
+                                  Icons.arrow_forward_rounded,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
                 ),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ),
-    );
-  }
-}
-
-class _RouteProgressCard extends StatelessWidget {
-  const _RouteProgressCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE8EDF5), width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Current Route',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF0A1628),
-                ),
-              ),
-              Text(
-                'ETA: 12 min',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFF7B8CA6),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(99),
-            child: const LinearProgressIndicator(
-              value: 0.38,
-              minHeight: 4,
-              backgroundColor: Color(0xFFE8EDF5),
-              valueColor: AlwaysStoppedAnimation(Color(0xFF2563EB)),
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _RouteStop(label: 'Pickup', state: _StopState.done),
-              _RouteStop(label: 'On Way', state: _StopState.active),
-              _RouteStop(label: 'Arrive', state: _StopState.next),
-              _RouteStop(label: 'Done', state: _StopState.next),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NoActiveRouteCard extends StatelessWidget {
-  const _NoActiveRouteCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE8EDF5), width: 0.5),
-      ),
-      child: const Text(
-        'No active delivery',
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: Color(0xFF7B8CA6),
-        ),
-      ),
-    );
-  }
-}
-
-enum _StopState { done, active, next }
-
-class _RouteStop extends StatelessWidget {
-  const _RouteStop({required this.label, required this.state});
-
-  final String label;
-  final _StopState state;
-
-  @override
-  Widget build(BuildContext context) {
-    Color dotColor;
-    List<BoxShadow> shadows = [];
-
-    switch (state) {
-      case _StopState.done:
-        dotColor = const Color(0xFF2563EB);
-        break;
-      case _StopState.active:
-        dotColor = const Color(0xFF2563EB);
-        shadows = [
-          const BoxShadow(
-            color: Color(0x662563EB),
-            blurRadius: 0,
-            spreadRadius: 3,
-          ),
-        ];
-        break;
-      case _StopState.next:
-        dotColor = const Color(0xFFCBD5E1);
-        break;
-    }
-
-    return Column(
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: dotColor,
-            shape: BoxShape.circle,
-            boxShadow: shadows,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 10,
-            color: Color(0xFF8898B0),
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
     );
   }
 }
 
 class _DeliveryData {
   const _DeliveryData({
-    required this.orderId,
     required this.customerName,
-    required this.address,
+    required this.avatarUrl,
+    required this.date,
     required this.status,
   });
 
-  final String orderId;
   final String customerName;
-  final String address;
+  final String avatarUrl;
+  final String? date;
   final String status;
 }
 
@@ -966,64 +867,53 @@ class _ActiveDeliveriesCard extends StatelessWidget {
             ),
           ),
           const Divider(height: 0.5, color: Color(0xFFF1F5FB)),
-          FutureBuilder<List<_DeliveryData>>(
-            future: activeOrdersFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
+          Expanded(
+            child: FutureBuilder<List<_DeliveryData>>(
+              future: activeOrdersFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-              if (snapshot.hasError) {
-                return const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    'Failed to load active deliveries',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF7B8CA6),
-                      fontWeight: FontWeight.w600,
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Text(
+                      'Failed to load active deliveries',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF7B8CA6),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                );
-              }
-
-              final items = snapshot.data ?? const <_DeliveryData>[];
-              if (items.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    'No active deliveries.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF7B8CA6),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                );
-              }
-
-              return ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  return Column(
-                    children: [
-                      _DeliveryRow(item: item),
-                      if (index < items.length - 1)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 16),
-                          child: Divider(height: 0.5, color: Color(0xFFF1F5FB)),
-                        ),
-                    ],
                   );
-                },
-              );
-            },
+                }
+
+                final items = snapshot.data ?? const <_DeliveryData>[];
+                if (items.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'No active deliveries.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF7B8CA6),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  );
+                }
+
+                return ListView.separated(
+                  padding: EdgeInsets.zero,
+                  itemCount: items.length,
+                  itemBuilder: (context, index) =>
+                      _DeliveryRow(item: items[index]),
+                  separatorBuilder: (context, index) => const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Divider(height: 0.5, color: Color(0xFFF1F5FB)),
+                  ),
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -1035,17 +925,6 @@ class _DeliveryRow extends StatelessWidget {
   const _DeliveryRow({required this.item});
 
   final _DeliveryData item;
-
-  String _shortOrderNum(String value) {
-    const prefix = 'Order #';
-    final raw = value.startsWith(prefix)
-        ? value.substring(prefix.length)
-        : value;
-    if (raw.length <= 12) {
-      return '$prefix$raw';
-    }
-    return '$prefix${raw.substring(0, 4)}...${raw.substring(raw.length - 4)}';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1087,11 +966,19 @@ class _DeliveryRow extends StatelessWidget {
           Container(
             width: 42,
             height: 42,
-            decoration: BoxDecoration(
-              color: iconBg,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(Icons.location_on_outlined, color: iconColor, size: 20),
+            decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
+            clipBehavior: Clip.antiAlias,
+            child: item.avatarUrl.isEmpty
+                ? Icon(Icons.person_outline_rounded, color: iconColor, size: 20)
+                : Image.network(
+                    item.avatarUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Icon(
+                      Icons.person_outline_rounded,
+                      color: iconColor,
+                      size: 20,
+                    ),
+                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1099,7 +986,7 @@ class _DeliveryRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _shortOrderNum(item.orderId),
+                  item.customerName,
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
@@ -1108,16 +995,7 @@ class _DeliveryRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  item.customerName,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF7B8CA6),
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  item.address,
+                  item.date ?? 'Date unavailable',
                   style: const TextStyle(
                     fontSize: 12,
                     color: Color(0xFF7B8CA6),

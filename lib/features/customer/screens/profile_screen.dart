@@ -38,6 +38,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         name: 'Customer',
         email: 'No email',
         phone: '',
+        avatarUrl: '',
         totalOrders: 0,
         activeOrders: 0,
       );
@@ -45,6 +46,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     var name = (user.userMetadata?['full_name'] as String?)?.trim() ?? '';
     var phone = '';
+    var avatarUrl = '';
     final email = (user.email ?? '').trim().isNotEmpty
         ? (user.email ?? '').trim()
         : 'No email';
@@ -52,7 +54,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final profile = await Supabase.instance.client
           .from('customer_profiles')
-          .select('name, phone')
+          .select('name, phone, avatar_url')
           .eq('user_id', user.id)
           .maybeSingle();
 
@@ -61,6 +63,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         name = profileName;
       }
       phone = profile?['phone']?.toString().trim() ?? '';
+      avatarUrl = profile?['avatar_url']?.toString().trim() ?? '';
     } catch (e) {
       debugPrint('Failed to load customer profile name: $e');
     }
@@ -109,6 +112,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       name: name,
       email: email,
       phone: phone,
+      avatarUrl: avatarUrl,
       totalOrders: totalOrders,
       activeOrders: activeOrders,
     );
@@ -149,6 +153,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   name: 'Customer',
                   email: 'No email',
                   phone: '',
+                  avatarUrl: '',
                   totalOrders: 0,
                   activeOrders: 0,
                 );
@@ -156,7 +161,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                _ProfileHeader(name: profile.name, email: profile.email),
+                _ProfileHeader(
+                  name: profile.name,
+                  email: profile.email,
+                  avatarUrl: profile.avatarUrl,
+                ),
                 const SizedBox(height: 16),
                 _QuickInfoSection(
                   totalOrders: profile.totalOrders,
@@ -166,6 +175,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _AccountOptionsSection(
                   currentName: profile.name,
                   currentPhone: profile.phone,
+                  currentAvatarUrl: profile.avatarUrl,
                   onProfileUpdated: _refreshProfile,
                 ),
                 const SizedBox(height: 20),
@@ -180,10 +190,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.name, required this.email});
+  const _ProfileHeader({
+    required this.name,
+    required this.email,
+    required this.avatarUrl,
+  });
 
   final String name;
   final String email;
+  final String avatarUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -202,10 +217,13 @@ class _ProfileHeader extends StatelessWidget {
       ),
       child: Column(
         children: [
-          const CircleAvatar(
+          CircleAvatar(
             radius: 40,
             backgroundColor: Color(0xFFEFF4FF),
-            child: Icon(Icons.person, color: Color(0xFF2563EB), size: 42),
+            backgroundImage: avatarUrl.isEmpty ? null : NetworkImage(avatarUrl),
+            child: avatarUrl.isEmpty
+                ? const Icon(Icons.person, color: Color(0xFF2563EB), size: 42)
+                : null,
           ),
           const SizedBox(height: 12),
           Text(
@@ -311,11 +329,13 @@ class _AccountOptionsSection extends StatelessWidget {
   const _AccountOptionsSection({
     required this.currentName,
     required this.currentPhone,
+    required this.currentAvatarUrl,
     required this.onProfileUpdated,
   });
 
   final String currentName;
   final String currentPhone;
+  final String currentAvatarUrl;
   final VoidCallback onProfileUpdated;
 
   @override
@@ -344,6 +364,7 @@ class _AccountOptionsSection extends StatelessWidget {
                   builder: (_) => EditProfileScreen(
                     initialName: currentName,
                     initialPhone: currentPhone,
+                    initialAvatarUrl: currentAvatarUrl,
                   ),
                 ),
               );
@@ -383,6 +404,7 @@ class _ProfileData {
     required this.name,
     required this.email,
     required this.phone,
+    required this.avatarUrl,
     required this.totalOrders,
     required this.activeOrders,
   });
@@ -390,6 +412,7 @@ class _ProfileData {
   final String name;
   final String email;
   final String phone;
+  final String avatarUrl;
   final int totalOrders;
   final int activeOrders;
 }

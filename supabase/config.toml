@@ -1,0 +1,2 @@
+[functions.driver-profile-photo]
+verify_jwt = false

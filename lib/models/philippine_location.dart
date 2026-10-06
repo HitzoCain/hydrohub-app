@@ -33,3 +33,21 @@ class AddressFormData {
   final String? houseNumber;
   final String? landmark;
 }
+
+class AddressLocationDetails {
+  const AddressLocationDetails({
+    this.region,
+    this.province,
+    this.cityMunicipality,
+    this.barangay,
+    this.street,
+    this.houseNumber,
+  });
+
+  final String? region;
+  final String? province;
+  final String? cityMunicipality;
+  final String? barangay;
+  final String? street;
+  final String? houseNumber;
+}

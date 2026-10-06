@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -157,6 +158,40 @@ class _AddressScreenState extends State<AddressScreen> {
     return 'Lat: ${lat.toStringAsFixed(6)}, Lng: ${lng.toStringAsFixed(6)}';
   }
 
+  Future<LatLng?> _geocodeDeliveryAddress(String address) async {
+    final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': address,
+      'format': 'jsonv2',
+      'limit': '1',
+      'countrycodes': 'ph',
+    });
+
+    try {
+      final response = await http
+          .get(uri, headers: const {'User-Agent': 'HydroHub App'})
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List || decoded.isEmpty || decoded.first is! Map) {
+        return null;
+      }
+
+      final result = Map<String, dynamic>.from(decoded.first as Map);
+      final latitude = double.tryParse(result['lat']?.toString() ?? '');
+      final longitude = double.tryParse(result['lon']?.toString() ?? '');
+      if (latitude == null || longitude == null) return null;
+      if (latitude < 4 || latitude > 22 || longitude < 116 || longitude > 128) {
+        return null;
+      }
+
+      return LatLng(latitude, longitude);
+    } catch (error) {
+      debugPrint('Delivery address geocoding failed: $error');
+      return null;
+    }
+  }
+
   String _buildAddressTextFromNominatim(Map<String, dynamic> body) {
     final fallback = _cleanText(body['display_name']);
     final address = body['address'];
@@ -218,6 +253,89 @@ class _AddressScreenState extends State<AddressScreen> {
     } catch (e) {
       debugPrint('Reverse geocoding failed: $e');
       return fallbackAddress;
+    }
+  }
+
+  Future<AddressLocationDetails?> _reverseGeocodeLocation(
+    LatLng location,
+  ) async {
+    final uri = Uri.https('nominatim.openstreetmap.org', '/reverse', {
+      'lat': location.latitude.toString(),
+      'lon': location.longitude.toString(),
+      'format': 'jsonv2',
+      'addressdetails': '1',
+      'zoom': '18',
+    });
+
+    try {
+      final response = await http
+          .get(uri, headers: const {'User-Agent': 'Aqua In Lavada Flutter App'})
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      final address = decoded['address'];
+      if (address is! Map<String, dynamic>) return null;
+
+      String? firstAvailable(List<String> keys) {
+        for (final key in keys) {
+          final value = _cleanText(address[key]);
+          if (value != null) return value;
+        }
+        return null;
+      }
+
+      return AddressLocationDetails(
+        region: firstAvailable(['state', 'region']),
+        province: firstAvailable(['province', 'state_district', 'county']),
+        cityMunicipality: firstAvailable([
+          'city',
+          'municipality',
+          'town',
+          'city_district',
+        ]),
+        barangay: firstAvailable([
+          'suburb',
+          'quarter',
+          'neighbourhood',
+          'village',
+        ]),
+        street: firstAvailable(['road', 'pedestrian', 'residential']),
+        houseNumber: firstAvailable(['house_number']),
+      );
+    } catch (error) {
+      debugPrint('Map address lookup failed: $error');
+      return null;
+    }
+  }
+
+  Future<LatLng> _getCurrentDeviceLocation() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      throw Exception('Turn on your device location services and try again.');
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied) {
+      throw Exception('Location permission was denied.');
+    }
+    if (permission == LocationPermission.deniedForever) {
+      throw Exception('Allow location access in your device settings.');
+    }
+
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 12),
+        ),
+      );
+      return LatLng(position.latitude, position.longitude);
+    } catch (_) {
+      throw Exception('Could not get your location. Check your GPS signal.');
     }
   }
 
@@ -608,6 +726,21 @@ class _AddressScreenState extends State<AddressScreen> {
               child: CascadingAddressForm(
                 initialData: initialData,
                 initialLocation: initialLocation,
+                onResolveLocation: _reverseGeocodeLocation,
+                onUseCurrentLocation: () async {
+                  final location = await _getCurrentDeviceLocation();
+                  if (!modalContext.mounted) return null;
+                  return Navigator.push<LatLng>(
+                    modalContext,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          MapPickerScreen(initialLocation: location),
+                    ),
+                  );
+                },
+                targetRegionName: 'Eastern Visayas',
+                targetProvinceName: 'Samar',
+                targetCityMunicipalityName: 'City of Catbalogan',
                 onPickLocation: () async {
                   return Navigator.push<LatLng>(
                     modalContext,
@@ -629,6 +762,13 @@ class _AddressScreenState extends State<AddressScreen> {
                     houseNumber: data.houseNumber,
                     landmark: data.landmark,
                   );
+                  final resolvedLocation =
+                      location ?? await _geocodeDeliveryAddress(fullAddress);
+                  if (resolvedLocation == null) {
+                    throw Exception(
+                      'We could not find this address on the map. Add a landmark or choose the map option.',
+                    );
+                  }
                   final values = {
                     'label': 'Home',
                     'region': data.region.name,
@@ -644,8 +784,8 @@ class _AddressScreenState extends State<AddressScreen> {
                     'landmark': data.landmark?.trim(),
                     'address': fullAddress,
                     'address_text': fullAddress,
-                    'latitude': location?.latitude,
-                    'longitude': location?.longitude,
+                    'latitude': resolvedLocation.latitude,
+                    'longitude': resolvedLocation.longitude,
                   };
                   try {
                     if (existingId == null) {
@@ -664,8 +804,8 @@ class _AddressScreenState extends State<AddressScreen> {
                       'label': 'Home',
                       'address': fullAddress,
                       'address_text': fullAddress,
-                      'latitude': location?.latitude,
-                      'longitude': location?.longitude,
+                      'latitude': resolvedLocation.latitude,
+                      'longitude': resolvedLocation.longitude,
                     };
                     if (existingId == null) {
                       await Supabase.instance.client

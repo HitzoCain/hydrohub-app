@@ -18,12 +18,7 @@ class _OrdersScreenState extends State<OrdersScreen>
 
   final SupabaseClient supabase = Supabase.instance.client;
   List<Map<String, dynamic>> myOrders = <Map<String, dynamic>>[];
-  final List<String> _filters = const [
-    'All',
-    'Pending',
-    'Active',
-    'Completed',
-  ];
+  final List<String> _filters = const ['All', 'Pending', 'Active', 'Completed'];
   final Set<String> _hiddenOrderIds = <String>{};
 
   Timer? _refreshTimer;
@@ -95,11 +90,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   // ============================================================
 
   String _normalizeStatusValue(dynamic status) {
-    return status
-        .toString()
-        .trim()
-        .toLowerCase()
-        .replaceAll(' ', '_');
+    return status.toString().trim().toLowerCase().replaceAll(' ', '_');
   }
 
   // ============================================================
@@ -107,11 +98,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   // ============================================================
 
   String _normalizePaymentStatus(dynamic paymentStatus) {
-    return paymentStatus
-        .toString()
-        .trim()
-        .toLowerCase()
-        .replaceAll(' ', '_');
+    return paymentStatus.toString().trim().toLowerCase().replaceAll(' ', '_');
   }
 
   // ============================================================
@@ -119,11 +106,9 @@ class _OrdersScreenState extends State<OrdersScreen>
   // ============================================================
 
   bool _isPaymentRejected(Map<String, dynamic> order) {
-    final paymentStatus =
-        _normalizePaymentStatus(order['payment_status']);
+    final paymentStatus = _normalizePaymentStatus(order['payment_status']);
 
-    return paymentStatus == 'rejected' ||
-        paymentStatus == 'declined';
+    return paymentStatus == 'rejected' || paymentStatus == 'declined';
   }
 
   // ============================================================
@@ -133,17 +118,14 @@ class _OrdersScreenState extends State<OrdersScreen>
   bool _isOrderCancelled(Map<String, dynamic> order) {
     final status = _normalizeStatusValue(order['status']);
 
-    return status == 'cancelled' ||
-        status == 'canceled';
+    return status == 'cancelled' || status == 'canceled';
   }
 
   // ============================================================
   // LOAD ORDERS
   // ============================================================
 
-  Future<void> loadOrders({
-    bool showLoading = true,
-  }) async {
+  Future<void> loadOrders({bool showLoading = true}) async {
     // Prevent multiple refresh requests at the same time.
     if (_isRefreshing) {
       return;
@@ -173,9 +155,7 @@ class _OrdersScreenState extends State<OrdersScreen>
         return;
       }
 
-      debugPrint(
-        'Loading orders for customer: ${user.id}',
-      );
+      debugPrint('Loading orders for customer: ${user.id}');
 
       // --------------------------------------------------------
       // GET CURRENT ORDERS FROM SUPABASE
@@ -185,17 +165,11 @@ class _OrdersScreenState extends State<OrdersScreen>
           .from('orders')
           .select('*')
           .eq('customer_id', user.id)
-          .order(
-            'created_at',
-            ascending: false,
-          );
+          .order('created_at', ascending: false);
 
-      debugPrint(
-        'Orders fetched: ${response.length}',
-      );
+      debugPrint('Orders fetched: ${response.length}');
 
-      final allOrders =
-          List<Map<String, dynamic>>.from(response);
+      final allOrders = List<Map<String, dynamic>>.from(response);
 
       // --------------------------------------------------------
       // REMOVE ORDERS THAT SHOULD NOT APPEAR
@@ -214,21 +188,19 @@ class _OrdersScreenState extends State<OrdersScreen>
       // Therefore we MUST check payment_status here.
       //
 
-      List<Map<String, dynamic>> orders = allOrders
-          .where((order) {
-            // Hide cancelled orders.
-            if (_isOrderCancelled(order)) {
-              return false;
-            }
+      List<Map<String, dynamic>> orders = allOrders.where((order) {
+        // Hide cancelled orders.
+        if (_isOrderCancelled(order)) {
+          return false;
+        }
 
-            // Hide rejected GCash/payment orders.
-            if (_isPaymentRejected(order)) {
-              return false;
-            }
+        // Hide rejected GCash/payment orders.
+        if (_isPaymentRejected(order)) {
+          return false;
+        }
 
-            return true;
-          })
-          .toList();
+        return true;
+      }).toList();
 
       orders = _applyFilter(orders);
 
@@ -239,13 +211,9 @@ class _OrdersScreenState extends State<OrdersScreen>
         _isLoadingOrders = false;
       });
 
-      debugPrint(
-        'Visible customer orders: ${orders.length}',
-      );
+      debugPrint('Visible customer orders: ${orders.length}');
     } catch (e) {
-      debugPrint(
-        'Error loading orders: $e',
-      );
+      debugPrint('Error loading orders: $e');
 
       if (!mounted) return;
 
@@ -261,22 +229,15 @@ class _OrdersScreenState extends State<OrdersScreen>
   // NORMALIZED STATUS
   // ============================================================
 
-  String _normalizedStatus(
-    Map<String, dynamic> order,
-  ) {
-    return '${order['status'] ?? ''}'
-        .trim()
-        .toLowerCase()
-        .replaceAll(' ', '_');
+  String _normalizedStatus(Map<String, dynamic> order) {
+    return '${order['status'] ?? ''}'.trim().toLowerCase().replaceAll(' ', '_');
   }
 
   // ============================================================
   // FILTER ORDERS
   // ============================================================
 
-  List<Map<String, dynamic>> _applyFilter(
-    List<Map<String, dynamic>> orders,
-  ) {
+  List<Map<String, dynamic>> _applyFilter(List<Map<String, dynamic>> orders) {
     // ----------------------------------------------------------
     // PENDING
     // ----------------------------------------------------------
@@ -312,8 +273,7 @@ class _OrdersScreenState extends State<OrdersScreen>
       return orders.where((order) {
         final status = _normalizedStatus(order);
 
-        return status == 'delivered' ||
-            status == 'completed';
+        return status == 'delivered' || status == 'completed';
       }).toList();
     }
 
@@ -325,35 +285,18 @@ class _OrdersScreenState extends State<OrdersScreen>
   }
 
   // ============================================================
-  // ORDER ID
+  // CONTAINER QUANTITY
   // ============================================================
 
-  String _orderId(
-    Map<String, dynamic> order,
-  ) {
-    final id =
-        order['id']?.toString() ?? 'unknown';
-
-    return 'Order #${id.length >= 6 ? id.substring(0, 6) : id}';
-  }
-
-  // ============================================================
-  // GALLONS
-  // ============================================================
-
-  String _gallons(
-    Map<String, dynamic> order,
-  ) {
-    return '${order['gallons'] ?? ''} Gallons';
+  String _gallons(Map<String, dynamic> order) {
+    return '${order['gallons'] ?? ''} Containers';
   }
 
   // ============================================================
   // PRICE
   // ============================================================
 
-  String _price(
-    Map<String, dynamic> order,
-  ) {
+  String _price(Map<String, dynamic> order) {
     return '₱${order['total_price'] ?? ''}';
   }
 
@@ -361,9 +304,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   // STATUS
   // ============================================================
 
-  String _status(
-    Map<String, dynamic> order,
-  ) {
+  String _status(Map<String, dynamic> order) {
     return '${order['status'] ?? ''}';
   }
 
@@ -371,9 +312,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   // IS PENDING
   // ============================================================
 
-  bool _isPending(
-    Map<String, dynamic> order,
-  ) {
+  bool _isPending(Map<String, dynamic> order) {
     return _normalizedStatus(order) == 'pending';
   }
 
@@ -381,36 +320,25 @@ class _OrdersScreenState extends State<OrdersScreen>
   // CANCEL ORDER
   // ============================================================
 
-  Future<void> cancelOrder(
-    String orderId,
-  ) async {
+  Future<void> cancelOrder(String orderId) async {
     if (_cancellingOrderId != null) {
       return;
     }
 
-    final confirmed =
-        await showDialog<bool>(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text(
-            'Cancel Order',
-          ),
-          content: const Text(
-            'Are you sure you want to cancel this order?',
-          ),
+          title: const Text('Cancel Order'),
+          content: const Text('Are you sure you want to cancel this order?'),
           actions: [
             TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(false),
+              onPressed: () => Navigator.of(context).pop(false),
               child: const Text('No'),
             ),
             TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(true),
-              child: const Text(
-                'Yes, Cancel',
-              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Yes, Cancel'),
             ),
           ],
         );
@@ -428,22 +356,13 @@ class _OrdersScreenState extends State<OrdersScreen>
     try {
       await supabase
           .from('orders')
-          .update({
-        'status': 'cancelled',
-      }).eq(
-        'id',
-        orderId,
-      );
+          .update({'status': 'cancelled'})
+          .eq('id', orderId);
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Order cancelled successfully',
-          ),
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Order cancelled successfully')),
       );
 
       setState(() {
@@ -451,20 +370,13 @@ class _OrdersScreenState extends State<OrdersScreen>
       });
 
       // Immediately refresh.
-      await loadOrders(
-        showLoading: false,
-      );
+      await loadOrders(showLoading: false);
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        SnackBar(
-          content: Text(
-            'Failed to cancel order: $e',
-          ),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to cancel order: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -478,9 +390,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   // STATUS LABEL
   // ============================================================
 
-  String _statusLabel(
-    Map<String, dynamic> order,
-  ) {
+  String _statusLabel(Map<String, dynamic> order) {
     switch (_normalizedStatus(order)) {
       case 'pending':
         return 'Pending';
@@ -509,9 +419,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   // STATUS COLOR
   // ============================================================
 
-  Color _statusColor(
-    Map<String, dynamic> order,
-  ) {
+  Color _statusColor(Map<String, dynamic> order) {
     switch (_normalizedStatus(order)) {
       case 'pending':
         return const Color(0xFFCA8A04);
@@ -536,9 +444,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   // STATUS BACKGROUND
   // ============================================================
 
-  Color _statusBackground(
-    Map<String, dynamic> order,
-  ) {
+  Color _statusBackground(Map<String, dynamic> order) {
     switch (_normalizedStatus(order)) {
       case 'pending':
         return const Color(0xFFFEF3C7);
@@ -563,9 +469,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   // DELIVERY TYPE
   // ============================================================
 
-  String _deliveryType(
-    Map<String, dynamic> order,
-  ) {
+  String _deliveryType(Map<String, dynamic> order) {
     return '${order['delivery_type'] ?? 'now'}';
   }
 
@@ -573,33 +477,24 @@ class _OrdersScreenState extends State<OrdersScreen>
   // SCHEDULED DATE
   // ============================================================
 
-  DateTime? _scheduledDate(
-    Map<String, dynamic> order,
-  ) {
-    final rawDate =
-        order['scheduled_date'];
+  DateTime? _scheduledDate(Map<String, dynamic> order) {
+    final rawDate = order['scheduled_date'];
 
     if (rawDate == null) {
       return null;
     }
 
-    return DateTime.tryParse(
-      rawDate.toString(),
-    );
+    return DateTime.tryParse(rawDate.toString());
   }
 
   // ============================================================
   // SCHEDULED TIME
   // ============================================================
 
-  TimeOfDay? _scheduledTime(
-    Map<String, dynamic> order,
-  ) {
-    final rawTime =
-        order['scheduled_time']?.toString();
+  TimeOfDay? _scheduledTime(Map<String, dynamic> order) {
+    final rawTime = order['scheduled_time']?.toString();
 
-    if (rawTime == null ||
-        rawTime.isEmpty) {
+    if (rawTime == null || rawTime.isEmpty) {
       return null;
     }
 
@@ -609,30 +504,22 @@ class _OrdersScreenState extends State<OrdersScreen>
       return null;
     }
 
-    final hour =
-        int.tryParse(parts[0]);
+    final hour = int.tryParse(parts[0]);
 
-    final minute =
-        int.tryParse(parts[1]);
+    final minute = int.tryParse(parts[1]);
 
-    if (hour == null ||
-        minute == null) {
+    if (hour == null || minute == null) {
       return null;
     }
 
-    return TimeOfDay(
-      hour: hour,
-      minute: minute,
-    );
+    return TimeOfDay(hour: hour, minute: minute);
   }
 
   // ============================================================
   // FORMAT DATE
   // ============================================================
 
-  String _formatDate(
-    DateTime date,
-  ) {
+  String _formatDate(DateTime date) {
     const months = [
       'Jan',
       'Feb',
@@ -657,79 +544,58 @@ class _OrdersScreenState extends State<OrdersScreen>
   // BUILD ORDER CARD
   // ============================================================
 
-  Widget buildOrderCard(
-    Map<String, dynamic> order,
-  ) {
-    final scheduledDate =
-        _scheduledDate(order);
+  Widget buildOrderCard(Map<String, dynamic> order) {
+    final scheduledDate = _scheduledDate(order);
 
-    final scheduledTime =
-        _scheduledTime(order);
+    final scheduledTime = _scheduledTime(order);
 
     Color deliveryTypeColor() {
-      return _deliveryType(order) ==
-              'scheduled'
+      return _deliveryType(order) == 'scheduled'
           ? const Color(0xFF7C3AED)
           : const Color(0xFF0369A1);
     }
 
     Color deliveryTypeBackground() {
-      return _deliveryType(order) ==
-              'scheduled'
+      return _deliveryType(order) == 'scheduled'
           ? const Color(0xFFEDE9FE)
           : const Color(0xFFE0F2FE);
     }
 
     String deliveryTypeLabel() {
-      return _deliveryType(order) ==
-              'scheduled'
-          ? 'Scheduled'
-          : 'On Demand';
+      return _deliveryType(order) == 'scheduled' ? 'Scheduled' : 'On Demand';
     }
 
     return Padding(
-      padding:
-          const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Builder(
         builder: (context) {
           return Material(
             color: Colors.white,
-            borderRadius:
-                BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(14),
             child: InkWell(
-              borderRadius:
-                  BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(14),
 
               // ------------------------------------------------
               // TRACK ORDER
               // ------------------------------------------------
-
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute<void>(
-                    builder: (_) =>
-                        CustomerTrackOrderScreen(
-                      order: order,
-                    ),
+                    builder: (_) => CustomerTrackOrderScreen(order: order),
                   ),
                 );
               },
 
               child: Container(
-                padding:
-                    const EdgeInsets.all(14),
-                decoration:
-                    BoxDecoration(
-                  borderRadius:
-                      BorderRadius.circular(14),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
                   boxShadow: const [
                     BoxShadow(
-                      color:
-                          Color(0x0F233455),
+                      color: Color(0x0F233455),
                       blurRadius: 10,
-                      offset:
-                          Offset(0, 4),
+                      offset: Offset(0, 4),
                     ),
                   ],
                 ),
@@ -738,103 +604,59 @@ class _OrdersScreenState extends State<OrdersScreen>
                   children: [
                     Expanded(
                       child: Column(
-                        crossAxisAlignment:
-                            CrossAxisAlignment
-                                .start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _orderId(order),
-                            style:
-                                const TextStyle(
-                              fontSize: 16,
-                              fontWeight:
-                                  FontWeight.w700,
-                              color:
-                                  Color(0xFF0F172A),
-                            ),
-                          ),
-
-                          const SizedBox(
-                            height: 6,
-                          ),
-
-                          Text(
                             _gallons(order),
-                            style:
-                                const TextStyle(
+                            style: const TextStyle(
                               fontSize: 13,
-                              color:
-                                  Color(0xFF475569),
+                              color: Color(0xFF475569),
                             ),
                           ),
 
-                          const SizedBox(
-                            height: 3,
-                          ),
+                          const SizedBox(height: 3),
 
                           Text(
                             _price(order),
-                            style:
-                                const TextStyle(
+                            style: const TextStyle(
                               fontSize: 15,
-                              fontWeight:
-                                  FontWeight.w700,
-                              color:
-                                  Color(0xFF0F172A),
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
                             ),
                           ),
 
-                          const SizedBox(
-                            height: 6,
-                          ),
+                          const SizedBox(height: 6),
 
                           Container(
-                            padding:
-                                const EdgeInsets
-                                    .symmetric(
+                            padding: const EdgeInsets.symmetric(
                               horizontal: 8,
                               vertical: 3,
                             ),
-                            decoration:
-                                BoxDecoration(
-                              color:
-                                  deliveryTypeBackground(),
-                              borderRadius:
-                                  BorderRadius
-                                      .circular(
-                                          20),
+                            decoration: BoxDecoration(
+                              color: deliveryTypeBackground(),
+                              borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
                               deliveryTypeLabel(),
-                              style:
-                                  TextStyle(
+                              style: TextStyle(
                                 fontSize: 10,
-                                fontWeight:
-                                    FontWeight.w700,
-                                color:
-                                    deliveryTypeColor(),
+                                fontWeight: FontWeight.w700,
+                                color: deliveryTypeColor(),
                               ),
                             ),
                           ),
 
-                          if (scheduledDate !=
-                                  null &&
-                              scheduledTime !=
-                                  null) ...[
-                            const SizedBox(
-                              height: 5,
-                            ),
+                          if (scheduledDate != null &&
+                              scheduledTime != null) ...[
+                            const SizedBox(height: 5),
                             Text(
                               '${_formatDate(scheduledDate)}'
                               ' • '
                               '${scheduledTime.format(context)}',
-                              style:
-                                  const TextStyle(
+                              style: const TextStyle(
                                 fontSize: 11,
-                                color:
-                                    Color(0xFF64748B),
-                                fontWeight:
-                                    FontWeight.w500,
+                                color: Color(0xFF64748B),
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
                           ],
@@ -842,201 +664,114 @@ class _OrdersScreenState extends State<OrdersScreen>
                       ),
                     ),
 
-                    const SizedBox(
-                      width: 12,
-                    ),
+                    const SizedBox(width: 8),
 
                     Column(
-                      mainAxisSize:
-                          MainAxisSize.min,
-                      crossAxisAlignment:
-                          CrossAxisAlignment
-                              .end,
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         // --------------------------------------
                         // STATUS
                         // --------------------------------------
-
                         Container(
-                          padding:
-                              const EdgeInsets
-                                  .symmetric(
+                          padding: const EdgeInsets.symmetric(
                             horizontal: 10,
                             vertical: 6,
                           ),
-                          decoration:
-                              BoxDecoration(
-                            color:
-                                _statusBackground(
-                              order,
-                            ),
-                            borderRadius:
-                                BorderRadius
-                                    .circular(
-                                        999),
-                            border:
-                                Border.all(
-                              color:
-                                  _statusColor(
+                          decoration: BoxDecoration(
+                            color: _statusBackground(order),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: _statusColor(
                                 order,
-                              ).withValues(
-                                alpha: 0.12,
-                              ),
+                              ).withValues(alpha: 0.12),
                               width: 0.8,
                             ),
                           ),
                           child: Text(
                             _statusLabel(order),
-                            style:
-                                TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
-                              fontWeight:
-                                  FontWeight.w700,
-                              color:
-                                  _statusColor(
-                                order,
-                              ),
-                              letterSpacing:
-                                  0.1,
+                              fontWeight: FontWeight.w700,
+                              color: _statusColor(order),
+                              letterSpacing: 0.1,
                             ),
                           ),
                         ),
 
-                        const SizedBox(
-                          height: 18,
-                        ),
-
-                        // --------------------------------------
-                        // TRACK ORDER BUTTON
-                        // --------------------------------------
-
-                        SizedBox(
-                          width: 118,
-                          child:
-                              OutlinedButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute<
-                                    void>(
-                                  builder: (_) =>
-                                      CustomerTrackOrderScreen(
-                                    order: order,
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        CustomerTrackOrderScreen(order: order),
+                                  ),
+                                );
+                              },
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFF2563EB),
+                                minimumSize: const Size(0, 32),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              icon: const Icon(
+                                Icons.local_shipping_outlined,
+                                size: 15,
+                              ),
+                              label: const Text(
+                                'Track',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (_isPending(order))
+                              TextButton.icon(
+                                onPressed: _cancellingOrderId == order['id']
+                                    ? null
+                                    : () => cancelOrder(
+                                        order['id']?.toString() ?? '',
+                                      ),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: const Color(0xFFDC2626),
+                                  minimumSize: const Size(0, 32),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                                icon: _cancellingOrderId == order['id']
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.close_rounded, size: 15),
+                                label: Text(
+                                  _cancellingOrderId == order['id']
+                                      ? 'Cancelling'
+                                      : 'Cancel',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                              );
-                            },
-                            style:
-                                OutlinedButton
-                                    .styleFrom(
-                              minimumSize:
-                                  const Size
-                                      .fromHeight(
-                                36,
                               ),
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                horizontal: 12,
-                              ),
-                              foregroundColor:
-                                  const Color(
-                                0xFF2563EB,
-                              ),
-                              side:
-                                  const BorderSide(
-                                color:
-                                    Color(
-                                  0xFFBFDBFE,
-                                ),
-                              ),
-                              backgroundColor:
-                                  const Color(
-                                0xFFF8FBFF,
-                              ),
-                              shape:
-                                  RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                            10),
-                              ),
-                            ),
-                            child:
-                                const Text(
-                              'Track Order',
-                              style:
-                                  TextStyle(
-                                fontSize: 12,
-                                fontWeight:
-                                    FontWeight.w700,
-                              ),
-                            ),
-                          ),
+                          ],
                         ),
-
-                        // --------------------------------------
-                        // CANCEL ORDER
-                        // --------------------------------------
-
-                        if (_isPending(order)) ...[
-                          const SizedBox(
-                            height: 8,
-                          ),
-                          SizedBox(
-                            width: 118,
-                            child:
-                                ElevatedButton(
-                              onPressed:
-                                  _cancellingOrderId ==
-                                          order['id']
-                                      ? null
-                                      : () =>
-                                          cancelOrder(
-                                            order['id']
-                                                    ?.toString() ??
-                                                '',
-                                          ),
-                              style:
-                                  ElevatedButton
-                                      .styleFrom(
-                                backgroundColor:
-                                    Colors.red,
-                                minimumSize:
-                                    const Size
-                                        .fromHeight(
-                                  36,
-                                ),
-                                padding:
-                                    const EdgeInsets
-                                        .symmetric(
-                                  horizontal: 12,
-                                ),
-                                shape:
-                                    RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius
-                                          .circular(
-                                              10),
-                                ),
-                              ),
-                              child: Text(
-                                _cancellingOrderId ==
-                                        order['id']
-                                    ? 'Cancelling...'
-                                    : 'Cancel Order',
-                                style:
-                                    const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight:
-                                      FontWeight.w700,
-                                  color:
-                                      Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                   ],
@@ -1054,25 +789,17 @@ class _OrdersScreenState extends State<OrdersScreen>
   // ============================================================
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _background,
 
       appBar: AppBar(
-        automaticallyImplyLeading:
-            false,
+        automaticallyImplyLeading: false,
         title: const Text(
           'My Orders',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight:
-                FontWeight.w700,
-          ),
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
-        backgroundColor:
-            _background,
+        backgroundColor: _background,
         elevation: 0,
         scrolledUnderElevation: 0,
       ),
@@ -1080,158 +807,88 @@ class _OrdersScreenState extends State<OrdersScreen>
       body: SafeArea(
         child: Column(
           children: [
-            const SizedBox(
-              height: 8,
-            ),
+            const SizedBox(height: 8),
 
             // ==================================================
             // FILTER TABS
             // ==================================================
-
             Padding(
-              padding:
-                  const EdgeInsets
-                      .symmetric(
-                horizontal: 16,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
-                children:
-                    List<Widget>.generate(
-                  _filters.length,
-                  (index) {
-                    final isSelected =
-                        index ==
-                            _selectedFilterIndex;
+                children: List<Widget>.generate(_filters.length, (index) {
+                  final isSelected = index == _selectedFilterIndex;
 
-                    return Expanded(
-                      child: Padding(
-                        padding:
-                            EdgeInsets.only(
-                          right:
-                              index <
-                                      _filters
-                                              .length -
-                                          1
-                                  ? 8
-                                  : 0,
-                        ),
-                        child: InkWell(
-                          borderRadius:
-                              BorderRadius
-                                  .circular(
-                                      12),
-                          onTap: () {
-                            setState(() {
-                              _selectedFilterIndex =
-                                  index;
-                            });
+                  return Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        right: index < _filters.length - 1 ? 8 : 0,
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () {
+                          setState(() {
+                            _selectedFilterIndex = index;
+                          });
 
-                            loadOrders(
-                              showLoading:
-                                  false,
-                            );
-                          },
-                          child:
-                              AnimatedContainer(
-                            duration:
-                                const Duration(
-                              milliseconds:
-                                  180,
+                          loadOrders(showLoading: false);
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          height: 40,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? const Color(0xFF2563EB)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isSelected
+                                  ? const Color(0xFF2563EB)
+                                  : const Color(0xFFE2E8F0),
                             ),
-                            height: 40,
-                            alignment:
-                                Alignment
-                                    .center,
-                            decoration:
-                                BoxDecoration(
-                              color:
-                                  isSelected
-                                      ? const Color(
-                                          0xFF2563EB)
-                                      : Colors
-                                          .white,
-                              borderRadius:
-                                  BorderRadius
-                                      .circular(
-                                          12),
-                              border:
-                                  Border.all(
-                                color:
-                                    isSelected
-                                        ? const Color(
-                                            0xFF2563EB)
-                                        : const Color(
-                                            0xFFE2E8F0),
-                              ),
-                            ),
-                            child: Text(
-                              _filters[index],
-                              style:
-                                  TextStyle(
-                                color:
-                                    isSelected
-                                        ? Colors
-                                            .white
-                                        : const Color(
-                                            0xFF334155),
-                                fontWeight:
-                                    FontWeight
-                                        .w600,
-                              ),
+                          ),
+                          child: Text(
+                            _filters[index],
+                            style: TextStyle(
+                              color: isSelected
+                                  ? Colors.white
+                                  : const Color(0xFF334155),
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  );
+                }),
               ),
             ),
 
-            const SizedBox(
-              height: 14,
-            ),
+            const SizedBox(height: 14),
 
             // ==================================================
             // ORDERS
             // ==================================================
-
             Expanded(
               child: Builder(
                 builder: (context) {
-                  final user =
-                      supabase.auth
-                          .currentUser;
+                  final user = supabase.auth.currentUser;
 
                   if (user == null) {
-                    return const _EmptyState(
-                      message:
-                          'Please login',
-                    );
+                    return const _EmptyState(message: 'Please login');
                   }
 
                   if (_isLoadingOrders) {
-                    return const Center(
-                      child:
-                          CircularProgressIndicator(),
-                    );
+                    return const Center(child: CircularProgressIndicator());
                   }
 
                   // ------------------------------------------------
                   // HIDE ORDERS THAT WERE LOCALLY CANCELLED
                   // ------------------------------------------------
 
-                  final visibleOrders =
-                      myOrders
-                          .where(
-                    (order) {
-                      return !_hiddenOrderIds
-                          .contains(
-                        order['id']
-                            ?.toString(),
-                      );
-                    },
-                  ).toList();
+                  final visibleOrders = myOrders.where((order) {
+                    return !_hiddenOrderIds.contains(order['id']?.toString());
+                  }).toList();
 
                   // ------------------------------------------------
                   // EXTRA SAFETY CHECK
@@ -1241,49 +898,25 @@ class _OrdersScreenState extends State<OrdersScreen>
                   // in memory, do not display it.
                   //
 
-                  final safeOrders =
-                      visibleOrders
-                          .where(
-                    (order) {
-                      return !_isPaymentRejected(
-                              order) &&
-                          !_isOrderCancelled(
-                              order);
-                    },
-                  ).toList();
+                  final safeOrders = visibleOrders.where((order) {
+                    return !_isPaymentRejected(order) &&
+                        !_isOrderCancelled(order);
+                  }).toList();
 
                   if (safeOrders.isEmpty) {
                     return const _EmptyState();
                   }
 
                   return RefreshIndicator(
-                    onRefresh: () =>
-                        loadOrders(
-                      showLoading: false,
-                    ),
-                    child:
-                        ListView.builder(
-                      physics:
-                          const AlwaysScrollableScrollPhysics(),
-                      padding:
-                          const EdgeInsets
-                              .fromLTRB(
-                        16,
-                        0,
-                        16,
-                        16,
-                      ),
-                      itemCount:
-                          safeOrders.length,
-                      itemBuilder:
-                          (context, index) {
-                        final order =
-                            safeOrders[
-                                index];
+                    onRefresh: () => loadOrders(showLoading: false),
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      itemCount: safeOrders.length,
+                      itemBuilder: (context, index) {
+                        final order = safeOrders[index];
 
-                        return buildOrderCard(
-                          order,
-                        );
+                        return buildOrderCard(order);
                       },
                     ),
                   );
@@ -1301,56 +934,34 @@ class _OrdersScreenState extends State<OrdersScreen>
 // EMPTY STATE
 // ================================================================
 
-class _EmptyState
-    extends StatelessWidget {
-  const _EmptyState({
-    this.message =
-        'No orders yet',
-  });
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({this.message = 'No orders yet'});
 
   final String message;
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return Center(
       child: Container(
-        margin:
-            const EdgeInsets
-                .symmetric(
-          horizontal: 16,
-        ),
-        padding:
-            const EdgeInsets.all(
-          24,
-        ),
-        decoration:
-            BoxDecoration(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius:
-              BorderRadius.circular(
-            14,
-          ),
+          borderRadius: BorderRadius.circular(14),
           boxShadow: const [
             BoxShadow(
-              color:
-                  Color(0x0F233455),
+              color: Color(0x0F233455),
               blurRadius: 10,
-              offset:
-                  Offset(0, 4),
+              offset: Offset(0, 4),
             ),
           ],
         ),
         child: Text(
           message,
-          style:
-              const TextStyle(
+          style: const TextStyle(
             fontSize: 15,
-            fontWeight:
-                FontWeight.w600,
-            color:
-                Color(0xFF64748B),
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF64748B),
           ),
         ),
       ),

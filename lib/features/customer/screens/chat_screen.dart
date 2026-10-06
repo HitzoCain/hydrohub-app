@@ -2,15 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // Note: the project does not have a local `supabase_service.dart` helper.
 // Use `Supabase.instance.client` directly instead of importing a missing file.
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({
-    super.key,
-    required this.conversationId,
-  });
+  const ChatScreen({super.key, required this.conversationId});
 
   final String conversationId;
 
@@ -24,14 +22,11 @@ class _ChatScreenState extends State<ChatScreen> {
   static const Color _textDark = Color(0xFF0F172A);
   static const Color _textGray = Color(0xFF64748B);
 
-  final TextEditingController _messageController =
-      TextEditingController();
+  final TextEditingController _messageController = TextEditingController();
 
-  final ScrollController _scrollController =
-      ScrollController();
+  final ScrollController _scrollController = ScrollController();
 
-  StreamSubscription<List<Map<String, dynamic>>>?
-      _messageSubscription;
+  StreamSubscription<List<Map<String, dynamic>>>? _messageSubscription;
 
   List<Map<String, dynamic>> _messages = [];
 
@@ -43,6 +38,12 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
 
   String _driverName = 'Delivery Driver';
+
+  String _driverPhone = '';
+
+  String _driverAvatarUrl = '';
+
+  String _productInfo = '';
 
   String _orderNumber = '';
 
@@ -111,17 +112,16 @@ class _ChatScreenState extends State<ChatScreen> {
               .eq('id', orderId)
               .maybeSingle();
 
-            if (order != null) {
-            _orderNumber =
-                _getOrderNumber(order);
+          if (order != null) {
+            _orderNumber = _getOrderNumber(order);
 
-            _orderStatus =
-                _getOrderStatus(order);
+            _orderStatus = _getOrderStatus(order);
+
+            _driverPhone = _getPhone(order['driver_phone']);
+            _productInfo = _getProductInfo(order);
           }
         } catch (error) {
-          debugPrint(
-            'Failed to load order: $error',
-          );
+          debugPrint('Failed to load order: $error');
         }
       }
 
@@ -129,30 +129,30 @@ class _ChatScreenState extends State<ChatScreen> {
       // Load driver
       // --------------------------------------------------------
 
-      final driverId =
-          conversation['driver_id'];
+      final driverId = conversation['driver_id'];
 
-      if (driverId != null &&
-          driverId.toString().isNotEmpty) {
+      if (driverId != null && driverId.toString().isNotEmpty) {
         try {
-          final driver =
-              await Supabase.instance.client
-                  .from('employees')
-                  .select('*')
-                  .eq(
-                    'id',
-                    driverId,
-                  )
-                  .maybeSingle();
+          final driver = await Supabase.instance.client
+              .from('employees')
+              .select('*')
+              .eq('id', driverId)
+              .maybeSingle();
 
           if (driver != null) {
-            _driverName =
-                _getDriverName(driver);
+            _driverName = _getDriverName(driver);
+
+            _driverAvatarUrl =
+                driver['profile_image_url']?.toString().trim() ?? '';
+
+            if (_driverPhone.isEmpty) {
+              _driverPhone = _getPhone(
+                driver['phone'] ?? driver['mobile'] ?? driver['phone_number'],
+              );
+            }
           }
         } catch (error) {
-          debugPrint(
-            'Failed to load driver: $error',
-          );
+          debugPrint('Failed to load driver: $error');
         }
       }
 
@@ -168,13 +168,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _loading = false;
       });
 
-      _scrollToBottom(
-        animated: false,
-      );
+      _scrollToBottom(animated: false);
     } catch (error) {
-      debugPrint(
-        'Failed to load conversation: $error',
-      );
+      debugPrint('Failed to load conversation: $error');
 
       if (!mounted) return;
 
@@ -193,27 +189,56 @@ class _ChatScreenState extends State<ChatScreen> {
       final data = await Supabase.instance.client
           .from('messages')
           .select('*')
-          .eq(
-            'conversation_id',
-            widget.conversationId,
-          )
-          .order(
-            'created_at',
-            ascending: true,
-          );
+          .eq('conversation_id', widget.conversationId)
+          .order('created_at', ascending: true);
 
       if (!mounted) return;
 
       setState(() {
-        _messages =
-            List<Map<String, dynamic>>.from(
-          data,
-        );
+        _messages = List<Map<String, dynamic>>.from(data);
       });
+
+      await _markIncomingMessagesRead();
     } catch (error) {
-      debugPrint(
-        'Failed to load messages: $error',
+      debugPrint('Failed to load messages: $error');
+    }
+  }
+
+  Future<void> _markIncomingMessagesRead() async {
+    if (_conversation == null) return;
+
+    final conversationType = _conversation?['conversation_type']
+        ?.toString()
+        .toLowerCase();
+    final senderType = conversationType == 'support' ? 'admin' : 'driver';
+    final hasUnreadIncoming = _messages.any(
+      (message) =>
+          message['sender_type']?.toString().toLowerCase() == senderType &&
+          message['is_read'] == false,
+    );
+    if (!hasUnreadIncoming) return;
+
+    try {
+      final updatedMessages = await Supabase.instance.client
+          .from('messages')
+          .update({'is_read': true})
+          .eq('conversation_id', widget.conversationId)
+          .eq('sender_type', senderType)
+          .eq('is_read', false)
+          .select('id');
+      if (updatedMessages.isNotEmpty) return;
+    } catch (error) {
+      debugPrint('Direct read update failed, trying secure RPC: $error');
+    }
+
+    try {
+      final updatedCount = await Supabase.instance.client.rpc(
+        'mark_customer_conversation_read',
+        params: {'p_conversation_id': widget.conversationId},
       );
+      debugPrint('Marked $updatedCount incoming chat messages as read.');
+    } catch (error) {
+      debugPrint('Failed to mark customer chat messages as read: $error');
     }
   }
 
@@ -224,36 +249,27 @@ class _ChatScreenState extends State<ChatScreen> {
   void _subscribeToMessages() {
     _messageSubscription = Supabase.instance.client
         .from('messages')
-        .stream(
-          primaryKey: ['id'],
-        )
-        .eq(
-          'conversation_id',
-          widget.conversationId,
-        )
-        .order(
-          'created_at',
-          ascending: true,
-        )
+        .stream(primaryKey: ['id'])
+        .eq('conversation_id', widget.conversationId)
+        .order('created_at', ascending: true)
         .listen(
-      (data) {
-        if (!mounted) return;
+          (data) {
+            if (!mounted) return;
 
-        setState(() {
-          _messages =
-              List<Map<String, dynamic>>.from(
-            data,
-          );
-        });
+            setState(() {
+              _messages = List<Map<String, dynamic>>.from(data);
+            });
 
-        _scrollToBottom();
-      },
-      onError: (error) {
-        debugPrint(
-          'Message realtime error: $error',
+            if (_conversation != null) {
+              unawaited(_markIncomingMessagesRead());
+            }
+
+            _scrollToBottom();
+          },
+          onError: (error) {
+            debugPrint('Message realtime error: $error');
+          },
         );
-      },
-    );
   }
 
   // ============================================================
@@ -261,8 +277,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // ============================================================
 
   Future<void> _sendMessage() async {
-    final text =
-        _messageController.text.trim();
+    final text = _messageController.text.trim();
 
     if (text.isEmpty) {
       return;
@@ -277,28 +292,25 @@ class _ChatScreenState extends State<ChatScreen> {
         _sending = true;
       });
 
-      final user =
-          Supabase.instance.client.auth.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
 
       if (user == null) {
-        throw Exception(
-          'No authenticated customer found.',
-        );
+        throw Exception('No authenticated customer found.');
       }
 
       // --------------------------------------------------------
       // Insert message
       // --------------------------------------------------------
 
-      await Supabase.instance.client
-          .from('messages')
-          .insert({
-        'conversation_id':
-            widget.conversationId,
+      final now = DateTime.now().toLocal();
+
+      await Supabase.instance.client.from('messages').insert({
+        'conversation_id': widget.conversationId,
         'sender_type': 'customer',
         'sender_id': user.id,
         'message': text,
         'is_read': false,
+        'created_at': now.toIso8601String(),
       });
 
       // --------------------------------------------------------
@@ -308,16 +320,12 @@ class _ChatScreenState extends State<ChatScreen> {
       await Supabase.instance.client
           .from('conversations')
           .update({
-        'last_message': text,
-        'last_message_at':
-            DateTime.now().toIso8601String(),
-        'status': 'active',
-        'archived_at': null,
-      })
-          .eq(
-        'id',
-        widget.conversationId,
-      );
+            'last_message': text,
+            'last_message_at': now.toIso8601String(),
+            'status': 'active',
+            'archived_at': null,
+          })
+          .eq('id', widget.conversationId);
 
       _messageController.clear();
 
@@ -325,18 +333,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _scrollToBottom();
     } catch (error) {
-      debugPrint(
-        'Failed to send message: $error',
-      );
+      debugPrint('Failed to send message: $error');
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Unable to send message. Please try again.',
-          ),
+          content: Text('Unable to send message. Please try again.'),
         ),
       );
     } finally {
@@ -352,29 +355,22 @@ class _ChatScreenState extends State<ChatScreen> {
   // SCROLL
   // ============================================================
 
-  void _scrollToBottom({
-    bool animated = true,
-  }) {
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) {
+  void _scrollToBottom({bool animated = true}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) {
         return;
       }
 
-      final position =
-          _scrollController.position.maxScrollExtent;
+      final position = _scrollController.position.maxScrollExtent;
 
       if (animated) {
         _scrollController.animateTo(
           position,
-          duration:
-              const Duration(milliseconds: 250),
+          duration: const Duration(milliseconds: 250),
           curve: Curves.easeOut,
         );
       } else {
-        _scrollController.jumpTo(
-          position,
-        );
+        _scrollController.jumpTo(position);
       }
     });
   }
@@ -384,69 +380,93 @@ class _ChatScreenState extends State<ChatScreen> {
   // ============================================================
 
   String get _conversationType {
-    final value =
-        _conversation?['conversation_type'];
+    final value = _conversation?['conversation_type'];
 
     return value?.toString() ?? 'delivery';
   }
 
   bool get _isSupportConversation {
-    return _conversationType ==
-        'support';
+    return _conversationType == 'support';
   }
 
   // ============================================================
   // DRIVER NAME
   // ============================================================
 
-  String _getDriverName(
-    Map<String, dynamic> driver,
-  ) {
+  String _getDriverName(Map<String, dynamic> driver) {
     final name =
         driver['full_name'] ??
         driver['name'] ??
         driver['employee_name'] ??
         driver['first_name'];
 
-    if (name == null ||
-        name.toString().trim().isEmpty) {
+    if (name == null || name.toString().trim().isEmpty) {
       return 'Delivery Driver';
     }
 
     return name.toString();
   }
 
+  String _getPhone(dynamic value) {
+    return value?.toString().trim() ?? '';
+  }
+
+  String _getProductInfo(Map<String, dynamic> order) {
+    final product = order['product_name']?.toString().trim();
+    final capacity = order['capacity']?.toString().trim();
+    final quantity = order['gallons']?.toString().trim();
+
+    final productLabel = product == null || product.isEmpty ? 'Water' : product;
+    final sizeLabel = capacity == null || capacity.isEmpty
+        ? 'Size unavailable'
+        : capacity;
+    final quantityLabel = quantity == null || quantity.isEmpty ? '0' : quantity;
+
+    return '$productLabel • $sizeLabel • $quantityLabel Containers';
+  }
+
+  Future<void> _callDriver() async {
+    if (_driverPhone.isEmpty) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Driver phone number is not available.')),
+      );
+      return;
+    }
+
+    final uri = Uri(scheme: 'tel', path: _driverPhone);
+    final launched = await launchUrl(uri);
+
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open the phone app.')),
+      );
+    }
+  }
+
   // ============================================================
   // ORDER NUMBER
   // ============================================================
 
-  String _getOrderNumber(
-    Map<String, dynamic> order,
-  ) {
+  String _getOrderNumber(Map<String, dynamic> order) {
     final value =
         order['order_number'] ??
         order['order_no'] ??
         order['reference_number'] ??
         order['reference_no'];
 
-    if (value != null &&
-        value.toString().trim().isNotEmpty) {
+    if (value != null && value.toString().trim().isNotEmpty) {
       return value.toString();
     }
 
     final id = order['id'];
 
     if (id != null) {
-      final idString =
-          id.toString();
+      final idString = id.toString();
 
       if (idString.length >= 6) {
-        return idString
-            .substring(
-              0,
-              6,
-            )
-            .toUpperCase();
+        return idString.substring(0, 6).toUpperCase();
       }
 
       return idString.toUpperCase();
@@ -459,13 +479,8 @@ class _ChatScreenState extends State<ChatScreen> {
   // ORDER STATUS
   // ============================================================
 
-  String _getOrderStatus(
-    Map<String, dynamic> order,
-  ) {
-    final value =
-        order['status'] ??
-        order['order_status'] ??
-        '';
+  String _getOrderStatus(Map<String, dynamic> order) {
+    final value = order['status'] ?? order['order_status'] ?? '';
 
     if (value == null) {
       return '';
@@ -478,15 +493,12 @@ class _ChatScreenState extends State<ChatScreen> {
   // DISPLAY ORDER STATUS
   // ============================================================
 
-  String _formatOrderStatus(
-    String status,
-  ) {
+  String _formatOrderStatus(String status) {
     if (status.trim().isEmpty) {
       return 'Delivery';
     }
 
-    final normalized =
-        status.toLowerCase();
+    final normalized = status.toLowerCase();
 
     switch (normalized) {
       case 'pending':
@@ -513,22 +525,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
       default:
         return status
-            .replaceAll(
-              '_',
-              ' ',
-            )
+            .replaceAll('_', ' ')
             .split(' ')
-            .map(
-              (word) {
-                if (word.isEmpty) {
-                  return '';
-                }
+            .map((word) {
+              if (word.isEmpty) {
+                return '';
+              }
 
-                return word[0]
-                        .toUpperCase() +
-                    word.substring(1);
-              },
-            )
+              return word[0].toUpperCase() + word.substring(1);
+            })
             .join(' ');
     }
   }
@@ -537,37 +542,24 @@ class _ChatScreenState extends State<ChatScreen> {
   // SENDER TYPE
   // ============================================================
 
-  String _getSenderType(
-    Map<String, dynamic> message,
-  ) {
-    return (
-      message['sender_type'] ??
-      ''
-    )
-        .toString()
-        .toLowerCase();
+  String _getSenderType(Map<String, dynamic> message) {
+    return (message['sender_type'] ?? '').toString().toLowerCase();
   }
 
   // ============================================================
   // IS MY MESSAGE
   // ============================================================
 
-  bool _isMyMessage(
-    Map<String, dynamic> message,
-  ) {
-    return _getSenderType(message) ==
-        'customer';
+  bool _isMyMessage(Map<String, dynamic> message) {
+    return _getSenderType(message) == 'customer';
   }
 
   // ============================================================
   // SENDER NAME
   // ============================================================
 
-  String _getSenderName(
-    Map<String, dynamic> message,
-  ) {
-    final senderType =
-        _getSenderType(message);
+  String _getSenderName(Map<String, dynamic> message) {
+    final senderType = _getSenderType(message);
 
     switch (senderType) {
       case 'customer':
@@ -588,11 +580,8 @@ class _ChatScreenState extends State<ChatScreen> {
   // SENDER ROLE
   // ============================================================
 
-  String _getSenderRole(
-    Map<String, dynamic> message,
-  ) {
-    final senderType =
-        _getSenderType(message);
+  String _getSenderRole(Map<String, dynamic> message) {
+    final senderType = _getSenderType(message);
 
     switch (senderType) {
       case 'customer':
@@ -613,11 +602,8 @@ class _ChatScreenState extends State<ChatScreen> {
   // SENDER ICON
   // ============================================================
 
-  IconData _getSenderIcon(
-    Map<String, dynamic> message,
-  ) {
-    final senderType =
-        _getSenderType(message);
+  IconData _getSenderIcon(Map<String, dynamic> message) {
+    final senderType = _getSenderType(message);
 
     switch (senderType) {
       case 'driver':
@@ -638,11 +624,8 @@ class _ChatScreenState extends State<ChatScreen> {
   // SENDER ICON COLOR
   // ============================================================
 
-  Color _getSenderIconColor(
-    Map<String, dynamic> message,
-  ) {
-    final senderType =
-        _getSenderType(message);
+  Color _getSenderIconColor(Map<String, dynamic> message) {
+    final senderType = _getSenderType(message);
 
     switch (senderType) {
       case 'driver':
@@ -663,42 +646,24 @@ class _ChatScreenState extends State<ChatScreen> {
   // MESSAGE TIME
   // ============================================================
 
-  String _formatMessageTime(
-    dynamic value,
-  ) {
+  String _formatMessageTime(dynamic value) {
     if (value == null) {
       return '';
     }
 
-    final date =
-        DateTime.tryParse(
-      value.toString(),
-    );
+    final date = DateTime.tryParse(value.toString());
 
     if (date == null) {
       return '';
     }
 
-    final local =
-        date.toLocal();
+    final local = date.toLocal();
 
-    final hour =
-        local.hour % 12 == 0
-            ? 12
-            : local.hour % 12;
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
 
-    final minute =
-        local.minute
-            .toString()
-            .padLeft(
-              2,
-              '0',
-            );
+    final minute = local.minute.toString().padLeft(2, '0');
 
-    final period =
-        local.hour >= 12
-            ? 'PM'
-            : 'AM';
+    final period = local.hour >= 12 ? 'PM' : 'AM';
 
     return '$hour:$minute $period';
   }
@@ -708,9 +673,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // ============================================================
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _background,
 
@@ -719,13 +682,9 @@ class _ChatScreenState extends State<ChatScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            if (!_loading &&
-                _conversation != null)
-              _buildConversationCard(),
+            if (!_loading && _conversation != null) _buildConversationCard(),
 
-            Expanded(
-              child: _buildMessages(),
-            ),
+            Expanded(child: _buildMessages()),
 
             _buildComposer(),
           ],
@@ -739,17 +698,13 @@ class _ChatScreenState extends State<ChatScreen> {
   // ============================================================
 
   PreferredSizeWidget _buildAppBar() {
-    final title =
-        _isSupportConversation
-            ? 'Aqua In Lavada'
-            : _driverName;
+    final title = _isSupportConversation ? 'Aqua In Lavada' : _driverName;
 
-    final subtitle =
-        _isSupportConversation
-            ? 'Station Support'
-            : _orderNumber.isNotEmpty
-                ? 'Order #$_orderNumber'
-                : 'Delivery Driver';
+    final subtitle = _isSupportConversation
+        ? 'Station Support'
+        : _driverPhone.isNotEmpty
+        ? _driverPhone
+        : 'Phone unavailable';
 
     return AppBar(
       backgroundColor: Colors.white,
@@ -772,18 +727,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
           Expanded(
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
                   maxLines: 1,
-                  overflow:
-                      TextOverflow.ellipsis,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 16,
-                    fontWeight:
-                        FontWeight.w700,
+                    fontWeight: FontWeight.w700,
                     color: _textDark,
                   ),
                 ),
@@ -793,12 +745,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 Text(
                   subtitle,
                   maxLines: 1,
-                  overflow:
-                      TextOverflow.ellipsis,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 12,
-                    fontWeight:
-                        FontWeight.w500,
+                    fontWeight: FontWeight.w500,
                     color: _textGray,
                   ),
                 ),
@@ -809,14 +759,19 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
 
       actions: [
+        if (!_isSupportConversation)
+          IconButton(
+            tooltip: 'Call driver',
+            onPressed: _callDriver,
+            icon: const Icon(Icons.phone_outlined),
+          ),
+
         IconButton(
           tooltip: 'Refresh',
           onPressed: () async {
             await _loadConversation();
           },
-          icon: const Icon(
-            Icons.refresh_rounded,
-          ),
+          icon: const Icon(Icons.refresh_rounded),
         ),
 
         IconButton(
@@ -824,9 +779,7 @@ class _ChatScreenState extends State<ChatScreen> {
           onPressed: () {
             _showConversationInfo();
           },
-          icon: const Icon(
-            Icons.info_outline_rounded,
-          ),
+          icon: const Icon(Icons.info_outline_rounded),
         ),
 
         const SizedBox(width: 4),
@@ -844,55 +797,55 @@ class _ChatScreenState extends State<ChatScreen> {
         width: 42,
         height: 42,
         decoration: BoxDecoration(
-          color: const Color(
-            0xFFFFF7ED,
-          ),
-          borderRadius:
-              BorderRadius.circular(
-            13,
-          ),
+          color: const Color(0xFFFFF7ED),
+          borderRadius: BorderRadius.circular(13),
         ),
         child: const Icon(
           Icons.support_agent_rounded,
-          color: Color(
-            0xFFF59E0B,
-          ),
+          color: Color(0xFFF59E0B),
           size: 23,
         ),
       );
     }
 
-    final firstLetter =
-        _driverName
-                .trim()
-                .isNotEmpty
-            ? _driverName
-                .trim()[0]
-                .toUpperCase()
-            : 'D';
+    final firstLetter = _driverName.trim().isNotEmpty
+        ? _driverName.trim()[0].toUpperCase()
+        : 'D';
 
     return Container(
       width: 42,
       height: 42,
       decoration: BoxDecoration(
-        color: const Color(
-          0xFFEFF4FF,
-        ),
-        borderRadius:
-            BorderRadius.circular(
-          13,
-        ),
+        color: const Color(0xFFEFF4FF),
+        borderRadius: BorderRadius.circular(13),
       ),
       child: Center(
-        child: Text(
-          firstLetter,
-          style: const TextStyle(
-            color: _primaryBlue,
-            fontSize: 18,
-            fontWeight:
-                FontWeight.w800,
-          ),
-        ),
+        child: _driverAvatarUrl.isEmpty
+            ? Text(
+                firstLetter,
+                style: const TextStyle(
+                  color: _primaryBlue,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              )
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(13),
+                child: Image.network(
+                  _driverAvatarUrl,
+                  width: 42,
+                  height: 42,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Text(
+                    firstLetter,
+                    style: const TextStyle(
+                      color: _primaryBlue,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
       ),
     );
   }
@@ -904,47 +857,25 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildConversationCard() {
     if (_isSupportConversation) {
       return Container(
-        margin:
-            const EdgeInsets.fromLTRB(
-          16,
-          12,
-          16,
-          8,
-        ),
-        padding:
-            const EdgeInsets.all(14),
+        margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius:
-              BorderRadius.circular(
-            14,
-          ),
-          border: Border.all(
-            color: const Color(
-              0xFFE2E8F0,
-            ),
-          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
         ),
         child: Row(
           children: [
             Container(
               width: 40,
               height: 40,
-              decoration:
-                  BoxDecoration(
-                color: const Color(
-                  0xFFFFF7ED,
-                ),
-                borderRadius:
-                    BorderRadius.circular(
-                  11,
-                ),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF7ED),
+                borderRadius: BorderRadius.circular(11),
               ),
               child: const Icon(
                 Icons.support_agent_rounded,
-                color: Color(
-                  0xFFF59E0B,
-                ),
+                color: Color(0xFFF59E0B),
               ),
             ),
 
@@ -952,25 +883,20 @@ class _ChatScreenState extends State<ChatScreen> {
 
             const Expanded(
               child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     'Station Support',
                     style: TextStyle(
                       fontSize: 14,
-                      fontWeight:
-                          FontWeight.w700,
+                      fontWeight: FontWeight.w700,
                       color: _textDark,
                     ),
                   ),
                   SizedBox(height: 2),
                   Text(
                     'Aqua In Lavada • General Assistance',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: _textGray,
-                    ),
+                    style: TextStyle(fontSize: 12, color: _textGray),
                   ),
                 ],
               ),
@@ -981,41 +907,21 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return Container(
-      margin:
-          const EdgeInsets.fromLTRB(
-        16,
-        12,
-        16,
-        8,
-      ),
-      padding:
-          const EdgeInsets.all(14),
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(
-          0xFFEFF4FF,
-        ),
-        borderRadius:
-            BorderRadius.circular(
-          14,
-        ),
-        border: Border.all(
-          color: const Color(
-            0xFFD9E5FF,
-          ),
-        ),
+        color: const Color(0xFFEFF4FF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD9E5FF)),
       ),
       child: Row(
         children: [
           Container(
             width: 40,
             height: 40,
-            decoration:
-                BoxDecoration(
+            decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius:
-                  BorderRadius.circular(
-                11,
-              ),
+              borderRadius: BorderRadius.circular(11),
             ),
             child: const Icon(
               Icons.local_shipping_rounded,
@@ -1027,17 +933,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
           Expanded(
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _orderNumber.isNotEmpty
-                      ? 'Order #$_orderNumber'
-                      : 'Delivery Order',
+                  _productInfo.isNotEmpty
+                      ? _productInfo
+                      : 'Water • Size unavailable • 0 Containers',
                   style: const TextStyle(
                     fontSize: 14,
-                    fontWeight:
-                        FontWeight.w700,
+                    fontWeight: FontWeight.w700,
                     color: _textDark,
                   ),
                 ),
@@ -1048,10 +952,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   _orderStatus.isNotEmpty
                       ? 'Delivery Status: ${_formatOrderStatus(_orderStatus)}'
                       : 'Driver: $_driverName',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: _textGray,
-                  ),
+                  style: const TextStyle(fontSize: 12, color: _textGray),
                 ),
               ],
             ),
@@ -1068,9 +969,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildMessages() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(
-          color: _primaryBlue,
-        ),
+        child: CircularProgressIndicator(color: _primaryBlue),
       );
     }
 
@@ -1084,37 +983,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return ListView.builder(
       controller: _scrollController,
-      padding:
-          const EdgeInsets.fromLTRB(
-        16,
-        12,
-        16,
-        18,
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
       itemCount: _messages.length,
-      itemBuilder:
-          (context, index) {
-        final message =
-            _messages[index];
+      itemBuilder: (context, index) {
+        final message = _messages[index];
 
         return _MessageBubble(
           message: message,
-          senderName:
-              _getSenderName(message),
-          senderRole:
-              _getSenderRole(message),
-          senderIcon:
-              _getSenderIcon(message),
-          senderIconColor:
-              _getSenderIconColor(
-            message,
-          ),
-          isMine:
-              _isMyMessage(message),
-          timestamp:
-              _formatMessageTime(
-            message['created_at'],
-          ),
+          senderName: _getSenderName(message),
+          senderRole: _getSenderRole(message),
+          senderIcon: _getSenderIcon(message),
+          senderIconColor: _getSenderIconColor(message),
+          isMine: _isMyMessage(message),
+          timestamp: _formatMessageTime(message['created_at']),
         );
       },
     );
@@ -1127,24 +1008,16 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildEmptyMessages() {
     return Center(
       child: Padding(
-        padding:
-            const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Column(
-          mainAxisSize:
-              MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 68,
               height: 68,
-              decoration:
-                  BoxDecoration(
-                color: const Color(
-                  0xFFEFF4FF,
-                ),
-                borderRadius:
-                    BorderRadius.circular(
-                  20,
-                ),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF4FF),
+                borderRadius: BorderRadius.circular(20),
               ),
               child: Icon(
                 _isSupportConversation
@@ -1161,13 +1034,11 @@ class _ChatScreenState extends State<ChatScreen> {
               _isSupportConversation
                   ? 'Start a conversation with Station Support'
                   : 'Start chatting with your driver',
-              textAlign:
-                  TextAlign.center,
+              textAlign: TextAlign.center,
               style: const TextStyle(
                 color: _textDark,
                 fontSize: 15,
-                fontWeight:
-                    FontWeight.w700,
+                fontWeight: FontWeight.w700,
               ),
             ),
 
@@ -1177,8 +1048,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _isSupportConversation
                   ? 'Send us a message if you need help with your order or delivery.'
                   : 'Send a message to coordinate your delivery.',
-              textAlign:
-                  TextAlign.center,
+              textAlign: TextAlign.center,
               style: const TextStyle(
                 color: _textGray,
                 fontSize: 13,
@@ -1198,26 +1068,21 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildConversationNotFound() {
     return const Center(
       child: Padding(
-        padding:
-            EdgeInsets.all(30),
+        padding: EdgeInsets.all(30),
         child: Column(
-          mainAxisSize:
-              MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               Icons.chat_bubble_outline_rounded,
               size: 50,
-              color: Color(
-                0xFF94A3B8,
-              ),
+              color: Color(0xFF94A3B8),
             ),
             SizedBox(height: 14),
             Text(
               'Conversation not found',
               style: TextStyle(
                 fontSize: 16,
-                fontWeight:
-                    FontWeight.w700,
+                fontWeight: FontWeight.w700,
                 color: _textDark,
               ),
             ),
@@ -1225,10 +1090,7 @@ class _ChatScreenState extends State<ChatScreen> {
             Text(
               'This conversation may no longer be available.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                color: _textGray,
-              ),
+              style: TextStyle(fontSize: 13, color: _textGray),
             ),
           ],
         ),
@@ -1241,37 +1103,18 @@ class _ChatScreenState extends State<ChatScreen> {
   // ============================================================
 
   Widget _buildComposer() {
-    final isArchived =
-        _conversation?['status'] ==
-            'archived';
+    final isArchived = _conversation?['status'] == 'archived';
 
     if (isArchived) {
       return Container(
-        padding:
-            const EdgeInsets.fromLTRB(
-          16,
-          12,
-          16,
-          14,
-        ),
-        decoration:
-            const BoxDecoration(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+        decoration: const BoxDecoration(
           color: Colors.white,
-          border: Border(
-            top: BorderSide(
-              color: Color(
-                0xFFE2E8F0,
-              ),
-            ),
-          ),
+          border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
         ),
         child: Row(
           children: [
-            const Icon(
-              Icons.lock_outline_rounded,
-              size: 20,
-              color: _textGray,
-            ),
+            const Icon(Icons.lock_outline_rounded, size: 20, color: _textGray),
 
             const SizedBox(width: 10),
 
@@ -1281,8 +1124,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 style: TextStyle(
                   color: _textGray,
                   fontSize: 13,
-                  fontWeight:
-                      FontWeight.w500,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
@@ -1292,97 +1134,49 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return Container(
-      padding:
-          const EdgeInsets.fromLTRB(
-        12,
-        10,
-        12,
-        12,
-      ),
-      decoration:
-          const BoxDecoration(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(
-          top: BorderSide(
-            color: Color(
-              0xFFE2E8F0,
-            ),
-          ),
-        ),
+        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
       ),
       child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
             child: TextField(
-              controller:
-                  _messageController,
+              controller: _messageController,
               minLines: 1,
               maxLines: 5,
-              textInputAction:
-                  TextInputAction.newline,
-              decoration:
-                  InputDecoration(
+              textInputAction: TextInputAction.newline,
+              decoration: InputDecoration(
                 hintText: _isSupportConversation
-                  ? 'Message Station Support...'
-                  : 'Message $_driverName...',
-                hintStyle:
-                    const TextStyle(
-                  color: Color(
-                    0xFF94A3B8,
-                  ),
+                    ? 'Message Station Support...'
+                    : 'Message $_driverName...',
+                hintStyle: const TextStyle(
+                  color: Color(0xFF94A3B8),
                   fontSize: 14,
                 ),
                 filled: true,
-                fillColor:
-                    const Color(
-                  0xFFF1F5F9,
-                ),
-                contentPadding:
-                    const EdgeInsets
-                        .symmetric(
+                fillColor: const Color(0xFFF1F5F9),
+                contentPadding: const EdgeInsets.symmetric(
                   horizontal: 15,
                   vertical: 12,
                 ),
-                border:
-                    OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(
-                    15,
-                  ),
-                  borderSide:
-                      BorderSide.none,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(15),
+                  borderSide: BorderSide.none,
                 ),
-                enabledBorder:
-                    OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(
-                    15,
-                  ),
-                  borderSide:
-                      BorderSide.none,
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(15),
+                  borderSide: BorderSide.none,
                 ),
-                focusedBorder:
-                    OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(
-                    15,
-                  ),
-                  borderSide:
-                      const BorderSide(
-                    color:
-                        _primaryBlue,
-                    width: 1,
-                  ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(15),
+                  borderSide: const BorderSide(color: _primaryBlue, width: 1),
                 ),
               ),
-              onSubmitted:
-                  (_) {
-                if (_messageController
-                    .text
-                    .trim()
-                    .isNotEmpty) {
+              onSubmitted: (_) {
+                if (_messageController.text.trim().isNotEmpty) {
                   _sendMessage();
                 }
               },
@@ -1392,37 +1186,19 @@ class _ChatScreenState extends State<ChatScreen> {
           const SizedBox(width: 9),
 
           GestureDetector(
-            onTap:
-                _sending
-                    ? null
-                    : _sendMessage,
+            onTap: _sending ? null : _sendMessage,
             child: AnimatedContainer(
-              duration:
-                  const Duration(
-                milliseconds: 150,
-              ),
+              duration: const Duration(milliseconds: 150),
               width: 46,
               height: 46,
-              decoration:
-                  BoxDecoration(
-                color: _sending
-                    ? const Color(
-                        0xFF93C5FD,
-                      )
-                    : _primaryBlue,
-                borderRadius:
-                    BorderRadius.circular(
-                  23,
-                ),
+              decoration: BoxDecoration(
+                color: _sending ? const Color(0xFF93C5FD) : _primaryBlue,
+                borderRadius: BorderRadius.circular(23),
               ),
               child: _sending
                   ? const Padding(
-                      padding:
-                          EdgeInsets.all(
-                        13,
-                      ),
-                      child:
-                          CircularProgressIndicator(
+                      padding: EdgeInsets.all(13),
+                      child: CircularProgressIndicator(
                         strokeWidth: 2,
                         color: Colors.white,
                       ),
@@ -1446,32 +1222,17 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showConversationInfo() {
     showModalBottomSheet(
       context: context,
-      backgroundColor:
-          Colors.white,
-      shape:
-          const RoundedRectangleBorder(
-        borderRadius:
-            BorderRadius.vertical(
-          top: Radius.circular(
-            22,
-          ),
-        ),
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
       builder: (context) {
         return SafeArea(
           child: Padding(
-            padding:
-                const EdgeInsets.fromLTRB(
-              20,
-              18,
-              20,
-              24,
-            ),
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
             child: Column(
-              mainAxisSize:
-                  MainAxisSize.min,
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
@@ -1480,23 +1241,15 @@ class _ChatScreenState extends State<ChatScreen> {
                         'Conversation Information',
                         style: TextStyle(
                           fontSize: 18,
-                          fontWeight:
-                              FontWeight.w800,
+                          fontWeight: FontWeight.w800,
                           color: _textDark,
                         ),
                       ),
                     ),
 
                     IconButton(
-                      onPressed:
-                          () =>
-                              Navigator.pop(
-                        context,
-                      ),
-                      icon:
-                          const Icon(
-                        Icons.close_rounded,
-                      ),
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
                     ),
                   ],
                 ),
@@ -1505,45 +1258,29 @@ class _ChatScreenState extends State<ChatScreen> {
 
                 if (_isSupportConversation)
                   _InfoRow(
-                    icon:
-                        Icons.support_agent_rounded,
-                    label:
-                        'Conversation',
-                    value:
-                        'Station Support',
+                    icon: Icons.support_agent_rounded,
+                    label: 'Conversation',
+                    value: 'Station Support',
                   )
                 else
                   _InfoRow(
-                    icon:
-                        Icons.local_shipping_rounded,
-                    label:
-                        'Driver',
-                    value:
-                        _driverName,
+                    icon: Icons.local_shipping_rounded,
+                    label: 'Driver',
+                    value: _driverName,
                   ),
 
-                if (_orderNumber
-                    .isNotEmpty)
+                if (_orderNumber.isNotEmpty)
                   _InfoRow(
-                    icon:
-                        Icons.receipt_long_rounded,
-                    label:
-                        'Order',
-                    value:
-                        '#$_orderNumber',
+                    icon: Icons.receipt_long_rounded,
+                    label: 'Order',
+                    value: '#$_orderNumber',
                   ),
 
-                if (_orderStatus
-                    .isNotEmpty)
+                if (_orderStatus.isNotEmpty)
                   _InfoRow(
-                    icon:
-                        Icons.local_shipping_outlined,
-                    label:
-                        'Status',
-                    value:
-                        _formatOrderStatus(
-                      _orderStatus,
-                    ),
+                    icon: Icons.local_shipping_outlined,
+                    label: 'Status',
+                    value: _formatOrderStatus(_orderStatus),
                   ),
               ],
             ),
@@ -1558,8 +1295,7 @@ class _ChatScreenState extends State<ChatScreen> {
 // MESSAGE BUBBLE
 // ============================================================================
 
-class _MessageBubble
-    extends StatelessWidget {
+class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
     required this.senderName,
@@ -1585,84 +1321,43 @@ class _MessageBubble
   final String timestamp;
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     if (isMine) {
-      return _buildMyMessage(
-        context,
-      );
+      return _buildMyMessage(context);
     }
 
-    return _buildIncomingMessage(
-      context,
-    );
+    return _buildIncomingMessage(context);
   }
 
   // ============================================================
   // MY MESSAGE
   // ============================================================
 
-  Widget _buildMyMessage(
-    BuildContext context,
-  ) {
+  Widget _buildMyMessage(BuildContext context) {
     return Align(
-      alignment:
-          Alignment.centerRight,
+      alignment: Alignment.centerRight,
       child: Container(
-        constraints:
-            BoxConstraints(
-          maxWidth:
-              MediaQuery.of(
-                    context,
-                  ).size.width *
-                  0.76,
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.76,
         ),
-        margin:
-            const EdgeInsets.only(
-          bottom: 12,
-          left: 45,
-        ),
+        margin: const EdgeInsets.only(bottom: 12, left: 45),
         child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 11,
-              ),
-              decoration:
-                  const BoxDecoration(
-                color:
-                    Color(0xFF2563EB),
-                borderRadius:
-                    BorderRadius.only(
-                  topLeft:
-                      Radius.circular(
-                    16,
-                  ),
-                  topRight:
-                      Radius.circular(
-                    16,
-                  ),
-                  bottomLeft:
-                      Radius.circular(
-                    16,
-                  ),
-                  bottomRight:
-                      Radius.circular(
-                    4,
-                  ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              decoration: const BoxDecoration(
+                color: Color(0xFF2563EB),
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                  bottomLeft: Radius.circular(16),
+                  bottomRight: Radius.circular(4),
                 ),
               ),
               child: Text(
-                (message['message'] ??
-                        '')
-                    .toString(),
-                style:
-                    const TextStyle(
+                (message['message'] ?? '').toString(),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 14,
                   height: 1.35,
@@ -1673,32 +1368,23 @@ class _MessageBubble
             const SizedBox(height: 4),
 
             Row(
-              mainAxisSize:
-                  MainAxisSize.min,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
                   'You',
-                  style:
-                      TextStyle(
-                    color:
-                        Color(0xFF64748B),
+                  style: TextStyle(
+                    color: Color(0xFF64748B),
                     fontSize: 11,
-                    fontWeight:
-                        FontWeight.w600,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
 
-                if (timestamp
-                    .isNotEmpty) ...[
-                  const SizedBox(
-                    width: 5,
-                  ),
+                if (timestamp.isNotEmpty) ...[
+                  const SizedBox(width: 5),
                   Text(
                     timestamp,
-                    style:
-                        const TextStyle(
-                      color:
-                          Color(0xFF94A3B8),
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
                       fontSize: 10,
                     ),
                   ),
@@ -1715,133 +1401,75 @@ class _MessageBubble
   // INCOMING MESSAGE
   // ============================================================
 
-  Widget _buildIncomingMessage(
-    BuildContext context,
-  ) {
+  Widget _buildIncomingMessage(BuildContext context) {
     final isDriver =
-        message['sender_type']
-                ?.toString()
-                .toLowerCase() ==
-            'driver';
+        message['sender_type']?.toString().toLowerCase() == 'driver';
 
-    final isAdmin =
-        message['sender_type']
-                ?.toString()
-                .toLowerCase() ==
-            'admin';
+    final isAdmin = message['sender_type']?.toString().toLowerCase() == 'admin';
 
     final bubbleColor = isAdmin
-        ? const Color(
-            0xFFFFFBEB,
-          )
-        : const Color(
-            0xFFFFFFFF,
-          );
+        ? const Color(0xFFFFFBEB)
+        : const Color(0xFFFFFFFF);
 
     final borderColor = isAdmin
-        ? const Color(
-            0xFFFDE68A,
-          )
-        : const Color(
-            0xFFE2E8F0,
-          );
+        ? const Color(0xFFFDE68A)
+        : const Color(0xFFE2E8F0);
 
     return Align(
-      alignment:
-          Alignment.centerLeft,
+      alignment: Alignment.centerLeft,
       child: Container(
-        constraints:
-            BoxConstraints(
-          maxWidth:
-              MediaQuery.of(
-                    context,
-                  ).size.width *
-                  0.78,
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
         ),
-        margin:
-            const EdgeInsets.only(
-          bottom: 13,
-          right: 30,
-        ),
+        margin: const EdgeInsets.only(bottom: 13, right: 30),
         child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // --------------------------------------------------
             // SENDER IDENTIFICATION
             // --------------------------------------------------
-
             Row(
-              mainAxisSize:
-                  MainAxisSize.min,
-              crossAxisAlignment:
-                  CrossAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
                   width: 28,
                   height: 28,
-                  decoration:
-                      BoxDecoration(
+                  decoration: BoxDecoration(
                     color: isAdmin
-                        ? const Color(
-                            0xFFFFF7ED,
-                          )
-                        : const Color(
-                            0xFFEFF4FF,
-                          ),
-                    borderRadius:
-                        BorderRadius.circular(
-                      9,
-                    ),
+                        ? const Color(0xFFFFF7ED)
+                        : const Color(0xFFEFF4FF),
+                    borderRadius: BorderRadius.circular(9),
                   ),
-                  child: Icon(
-                    senderIcon,
-                    size: 16,
-                    color:
-                        senderIconColor,
-                  ),
+                  child: Icon(senderIcon, size: 16, color: senderIconColor),
                 ),
 
-                const SizedBox(
-                  width: 8,
-                ),
+                const SizedBox(width: 8),
 
                 Flexible(
                   child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         senderName,
                         maxLines: 1,
-                        overflow:
-                            TextOverflow.ellipsis,
-                        style:
-                            const TextStyle(
-                          color:
-                              Color(0xFF0F172A),
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF0F172A),
                           fontSize: 12,
-                          fontWeight:
-                              FontWeight.w700,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
 
-                      if (senderRole
-                          .isNotEmpty)
+                      if (senderRole.isNotEmpty)
                         Text(
                           senderRole,
-                          style:
-                              TextStyle(
+                          style: TextStyle(
                             color: isDriver
-                                ? const Color(
-                                    0xFF2563EB,
-                                  )
-                                : const Color(
-                                    0xFFF59E0B,
-                                  ),
+                                ? const Color(0xFF2563EB)
+                                : const Color(0xFFF59E0B),
                             fontSize: 10,
-                            fontWeight:
-                                FontWeight.w600,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                     ],
@@ -1855,50 +1483,22 @@ class _MessageBubble
             // --------------------------------------------------
             // BUBBLE
             // --------------------------------------------------
-
             Container(
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 11,
-              ),
-              decoration:
-                  BoxDecoration(
-                color:
-                    bubbleColor,
-                borderRadius:
-                    const BorderRadius.only(
-                  topLeft:
-                      Radius.circular(
-                    4,
-                  ),
-                  topRight:
-                      Radius.circular(
-                    16,
-                  ),
-                  bottomLeft:
-                      Radius.circular(
-                    16,
-                  ),
-                  bottomRight:
-                      Radius.circular(
-                    16,
-                  ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              decoration: BoxDecoration(
+                color: bubbleColor,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(4),
+                  topRight: Radius.circular(16),
+                  bottomLeft: Radius.circular(16),
+                  bottomRight: Radius.circular(16),
                 ),
-                border:
-                    Border.all(
-                  color:
-                      borderColor,
-                ),
+                border: Border.all(color: borderColor),
               ),
               child: Text(
-                (message['message'] ??
-                        '')
-                    .toString(),
-                style:
-                    const TextStyle(
-                  color:
-                      Color(0xFF0F172A),
+                (message['message'] ?? '').toString(),
+                style: const TextStyle(
+                  color: Color(0xFF0F172A),
                   fontSize: 14,
                   height: 1.35,
                 ),
@@ -1907,17 +1507,13 @@ class _MessageBubble
 
             const SizedBox(height: 4),
 
-            if (timestamp
-                .isNotEmpty)
+            if (timestamp.isNotEmpty)
               Text(
                 timestamp,
-                style:
-                    const TextStyle(
-                  color:
-                      Color(0xFF94A3B8),
+                style: const TextStyle(
+                  color: Color(0xFF94A3B8),
                   fontSize: 10,
-                  fontWeight:
-                      FontWeight.w500,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
           ],
@@ -1931,8 +1527,7 @@ class _MessageBubble
 // INFO ROW
 // ============================================================================
 
-class _InfoRow
-    extends StatelessWidget {
+class _InfoRow extends StatelessWidget {
   const _InfoRow({
     required this.icon,
     required this.label,
@@ -1946,58 +1541,34 @@ class _InfoRow
   final String value;
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return Padding(
-      padding:
-          const EdgeInsets.only(
-        bottom: 14,
-      ),
+      padding: const EdgeInsets.only(bottom: 14),
       child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 38,
             height: 38,
-            decoration:
-                BoxDecoration(
-              color:
-                  const Color(
-                0xFFEFF4FF,
-              ),
-              borderRadius:
-                  BorderRadius.circular(
-                11,
-              ),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF4FF),
+              borderRadius: BorderRadius.circular(11),
             ),
-            child: Icon(
-              icon,
-              size: 19,
-              color:
-                  const Color(
-                0xFF2563EB,
-              ),
-            ),
+            child: Icon(icon, size: 19, color: const Color(0xFF2563EB)),
           ),
 
           const SizedBox(width: 12),
 
           Expanded(
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   label,
-                  style:
-                      const TextStyle(
+                  style: const TextStyle(
                     fontSize: 11,
-                    color:
-                        Color(0xFF94A3B8),
-                    fontWeight:
-                        FontWeight.w600,
+                    color: Color(0xFF94A3B8),
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
 
@@ -2005,13 +1576,10 @@ class _InfoRow
 
                 Text(
                   value,
-                  style:
-                      const TextStyle(
+                  style: const TextStyle(
                     fontSize: 14,
-                    color:
-                        Color(0xFF0F172A),
-                    fontWeight:
-                        FontWeight.w600,
+                    color: Color(0xFF0F172A),
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],

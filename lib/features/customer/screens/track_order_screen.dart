@@ -357,9 +357,9 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
                 ),
                 const SizedBox(height: 8),
                 _InfoRow(
-                  label: 'Gallons Ordered',
+                  label: 'Containers Ordered',
                   value:
-                      '${widget.totalGallons} Gallons',
+                      '${widget.totalGallons} Containers',
                 ),
                 const SizedBox(height: 8),
                 _InfoRow(
@@ -484,6 +484,8 @@ class _CustomerTrackOrderScreenState
   int _stationRating = 0;
 
   String _existingFeedbackComment = '';
+  String _adminReply = '';
+  String _adminRepliedAt = '';
 
   final TextEditingController _feedbackCommentController =
       TextEditingController();
@@ -862,6 +864,10 @@ class _CustomerTrackOrderScreenState
 
         final comment =
             data['comment']?.toString() ?? '';
+        final adminReply =
+            data['admin_reply']?.toString() ?? '';
+        final adminRepliedAt =
+            data['admin_replied_at']?.toString() ?? '';
 
         _driverRating =
             int.tryParse(
@@ -876,11 +882,15 @@ class _CustomerTrackOrderScreenState
                 0;
 
         _existingFeedbackComment = comment;
+        _adminReply = adminReply.trim();
+        _adminRepliedAt = adminRepliedAt.trim();
         _feedbackCommentController.text = comment;
       } else {
         _driverRating = 0;
         _stationRating = 0;
         _existingFeedbackComment = '';
+        _adminReply = '';
+        _adminRepliedAt = '';
         _feedbackCommentController.clear();
       }
 
@@ -1179,6 +1189,62 @@ class _CustomerTrackOrderScreenState
                     color: Color(0xFF334155),
                     height: 1.45,
                   ),
+                ),
+              ),
+            ],
+            if (_adminReply.trim().isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0F2FE),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFFBAE6FD),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.support_agent_rounded,
+                          size: 18,
+                          color: Color(0xFF0F172A),
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'HydroHub Response',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ),
+                        if (_adminRepliedAt.trim().isNotEmpty)
+                          Text(
+                            _formatAdminReplyDateTime(_adminRepliedAt),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF475569),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      _adminReply,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF1E293B),
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1781,6 +1847,34 @@ class _CustomerTrackOrderScreenState
         '${dateTime.day}, '
         '${dateTime.year} • '
         '$hour:$minute';
+  }
+
+  String _formatAdminReplyDateTime(
+      String rawValue) {
+    final parsed = DateTime.tryParse(rawValue);
+    if (parsed == null) {
+      return '';
+    }
+
+    final local = parsed.toLocal();
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    return '${months[local.month - 1]} '
+        '${local.day}, '
+        '${local.year}';
   }
 
   /*
@@ -2469,7 +2563,17 @@ class _CustomerTrackOrderScreenState
   */
 
   String _gallons() {
-    return '${_order['gallons'] ?? 0} Gallons';
+    return '${_order['gallons'] ?? 0} Containers';
+  }
+
+  String _productName() {
+    final value = _order['product_name']?.toString().trim() ?? '';
+    return value.isEmpty ? 'Water' : value;
+  }
+
+  String _capacity() {
+    final value = _order['capacity']?.toString().trim() ?? '';
+    return value.isEmpty ? 'Size unavailable' : value;
   }
 
   String _address() {
@@ -2515,7 +2619,21 @@ class _CustomerTrackOrderScreenState
           const SizedBox(height: 12),
 
           _InfoRow(
-            label: 'Gallons',
+            label: 'Product',
+            value: _productName(),
+          ),
+
+          const SizedBox(height: 8),
+
+          _InfoRow(
+            label: 'Size',
+            value: _capacity(),
+          ),
+
+          const SizedBox(height: 8),
+
+          _InfoRow(
+            label: 'Quantity',
             value: _gallons(),
           ),
 

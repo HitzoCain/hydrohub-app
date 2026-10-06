@@ -18,7 +18,6 @@ class MessagesScreen extends StatefulWidget {
 }
 
 class _MessagesScreenState extends State<MessagesScreen> {
-
   final SupabaseClient supabase = Supabase.instance.client;
 
   Timer? _refreshTimer;
@@ -70,12 +69,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
     _loadConversations();
 
-    _refreshTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) {
-        _refreshConversations();
-      },
-    );
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _refreshConversations();
+    });
   }
 
   // ============================================================
@@ -103,9 +99,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
       final user = supabase.auth.currentUser;
 
       if (user == null) {
-        debugPrint(
-          'MessagesScreen: No logged-in customer.',
-        );
+        debugPrint('MessagesScreen: No logged-in customer.');
 
         if (!mounted) return;
 
@@ -131,16 +125,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
       final ordersResponse = await supabase
           .from('orders')
           .select(
-            'id, customer_id, driver_id, status, created_at',
+            'id, customer_id, driver_id, status, created_at, product_name, capacity, gallons',
           )
-          .eq(
-            'customer_id',
-            customerId,
-          );
+          .eq('customer_id', customerId);
 
-      final orders = List<Map<String, dynamic>>.from(
-        ordersResponse,
-      );
+      final orders = List<Map<String, dynamic>>.from(ordersResponse);
 
       final orderIds = orders
           .map((order) => order['id'])
@@ -180,15 +169,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
           final driversResponse = await supabase
               .from('employees')
               .select('*')
-              .inFilter(
-                'id',
-                driverIds,
-              );
+              .inFilter('id', driverIds);
 
-          final drivers =
-              List<Map<String, dynamic>>.from(
-            driversResponse,
-          );
+          final drivers = List<Map<String, dynamic>>.from(driversResponse);
 
           for (final driver in drivers) {
             final id = driver['id'];
@@ -198,9 +181,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             }
           }
         } catch (e) {
-          debugPrint(
-            'MessagesScreen: Failed to load drivers: $e',
-          );
+          debugPrint('MessagesScreen: Failed to load drivers: $e');
         }
       }
 
@@ -214,19 +195,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
         final response = await supabase
             .from('conversations')
             .select('*')
-            .inFilter(
-              'order_id',
-              orderIds,
-            )
-            .order(
-              'last_message_at',
-              ascending: false,
-            );
+            .inFilter('order_id', orderIds)
+            .order('last_message_at', ascending: false);
 
-        deliveryConversations =
-            List<Map<String, dynamic>>.from(
-          response,
-        );
+        deliveryConversations = List<Map<String, dynamic>>.from(response);
       }
 
       // ==========================================================
@@ -239,68 +211,47 @@ class _MessagesScreenState extends State<MessagesScreen> {
         final existingSupport = await supabase
             .from('conversations')
             .select('*')
-            .eq(
-              'conversation_type',
-              'support',
-            )
-            .eq(
-              'participant_id',
-              customerId,
-            )
+            .eq('conversation_type', 'support')
+            .eq('participant_id', customerId)
             .maybeSingle();
 
         if (existingSupport != null) {
-          supportConversation =
-              Map<String, dynamic>.from(
-            existingSupport,
-          );
+          supportConversation = Map<String, dynamic>.from(existingSupport);
 
           // Reactivate support conversation if needed.
-          if (supportConversation['status'] ==
-              'archived') {
+          if (supportConversation['status'] == 'archived') {
             await supabase
                 .from('conversations')
-                .update({
-              'status': 'active',
-              'archived_at': null,
-            }).eq(
-              'id',
-              supportConversation['id'],
-            );
+                .update({'status': 'active', 'archived_at': null})
+                .eq('id', supportConversation['id']);
 
-            supportConversation['status'] =
-                'active';
+            supportConversation['status'] = 'active';
 
-            supportConversation['archived_at'] =
-                null;
+            supportConversation['archived_at'] = null;
           }
         } else {
           // Create the general Station Support
           // conversation for this customer.
+          final now = DateTime.now().toLocal();
+
           final createdSupport = await supabase
               .from('conversations')
               .insert({
-            'order_id': null,
-            'customer_id': customerId,
-            'participant_id': customerId,
-            'conversation_type': 'support',
-            'status': 'active',
-            'last_message': null,
-            'last_message_at':
-                DateTime.now().toIso8601String(),
-          })
+                'order_id': null,
+                'customer_id': customerId,
+                'participant_id': customerId,
+                'conversation_type': 'support',
+                'status': 'active',
+                'last_message': null,
+                'last_message_at': now.toIso8601String(),
+              })
               .select('*')
               .single();
 
-          supportConversation =
-              Map<String, dynamic>.from(
-            createdSupport,
-          );
+          supportConversation = Map<String, dynamic>.from(createdSupport);
         }
       } catch (e) {
-        debugPrint(
-          'MessagesScreen: Support conversation error: $e',
-        );
+        debugPrint('MessagesScreen: Support conversation error: $e');
       }
 
       // ==========================================================
@@ -309,14 +260,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
       final conversationIds = <String>[];
 
-      for (final conversation
-          in deliveryConversations) {
+      for (final conversation in deliveryConversations) {
         final id = conversation['id'];
 
         if (id != null) {
-          conversationIds.add(
-            id.toString(),
-          );
+          conversationIds.add(id.toString());
         }
       }
 
@@ -324,9 +272,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         final id = supportConversation['id'];
 
         if (id != null) {
-          conversationIds.add(
-            id.toString(),
-          );
+          conversationIds.add(id.toString());
         }
       }
 
@@ -340,31 +286,18 @@ class _MessagesScreenState extends State<MessagesScreen> {
         try {
           final unreadResponse = await supabase
               .from('messages')
-              .select(
-                'conversation_id, sender_type, is_read',
-              )
-              .inFilter(
-                'conversation_id',
-                conversationIds,
-              )
-              .eq(
-                'is_read',
-                false,
-              );
+              .select('conversation_id, sender_type, is_read')
+              .inFilter('conversation_id', conversationIds)
+              .eq('is_read', false);
 
-          final unreadMessages =
-              List<Map<String, dynamic>>.from(
+          final unreadMessages = List<Map<String, dynamic>>.from(
             unreadResponse,
           );
 
           for (final message in unreadMessages) {
-            final conversationId =
-                message['conversation_id'];
+            final conversationId = message['conversation_id'];
 
-            final senderType =
-                message['sender_type']
-                    ?.toString()
-                    .toLowerCase();
+            final senderType = message['sender_type']?.toString().toLowerCase();
 
             if (conversationId == null) {
               continue;
@@ -372,21 +305,16 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
             // Customer only needs to see unread messages
             // coming from driver or admin.
-            if (senderType != 'driver' &&
-                senderType != 'admin') {
+            if (senderType != 'driver' && senderType != 'admin') {
               continue;
             }
 
-            final key =
-                conversationId.toString();
+            final key = conversationId.toString();
 
-            unreadMap[key] =
-                (unreadMap[key] ?? 0) + 1;
+            unreadMap[key] = (unreadMap[key] ?? 0) + 1;
           }
         } catch (e) {
-          debugPrint(
-            'MessagesScreen: Failed to load unread messages: $e',
-          );
+          debugPrint('MessagesScreen: Failed to load unread messages: $e');
         }
       }
 
@@ -394,91 +322,69 @@ class _MessagesScreenState extends State<MessagesScreen> {
       // 8. BUILD UI CONVERSATIONS
       // ==========================================================
 
-      final List<ConversationData>
-          loadedConversations = [];
+      final List<ConversationData> loadedConversations = [];
 
       // ----------------------------------------------------------
       // DELIVERY / DRIVER CONVERSATIONS
       // ----------------------------------------------------------
 
-      for (final conversation
-          in deliveryConversations) {
-        final conversationId =
-            conversation['id']?.toString();
+      for (final conversation in deliveryConversations) {
+        final conversationId = conversation['id']?.toString();
 
-        final orderId =
-            conversation['order_id']?.toString();
+        final orderId = conversation['order_id']?.toString();
 
-        if (conversationId == null ||
-            orderId == null) {
+        if (conversationId == null || orderId == null) {
           continue;
         }
 
-        final order =
-            orderMap[orderId];
+        final order = orderMap[orderId];
 
         final driverId =
-            conversation['driver_id']
-                    ?.toString() ??
-                order?['driver_id']
-                    ?.toString();
+            conversation['driver_id']?.toString() ??
+            order?['driver_id']?.toString();
 
-        final driver =
-            driverId != null
-                ? driverMap[driverId]
-                : null;
+        final driver = driverId != null ? driverMap[driverId] : null;
 
         final driverName =
-            driver?['name'] ??
-            driver?['full_name'] ??
-            'Delivery Driver';
+            driver?['name'] ?? driver?['full_name'] ?? 'Delivery Driver';
 
-        final lastMessage =
-            (conversation['last_message'] ?? '')
+        final driverPhone =
+            (order?['driver_phone'] ??
+                    driver?['phone'] ??
+                    driver?['mobile_number'] ??
+                    driver?['contact_number'] ??
+                    '')
                 .toString()
                 .trim();
 
-        final lastMessageAt =
-            _parseDateTime(
-          conversation['last_message_at'],
-        );
+        final driverAvatarUrl =
+            driver?['profile_image_url']?.toString().trim() ?? '';
 
-        final orderStatus =
-            order?['status']
-                    ?.toString() ??
-                'pending';
+        final lastMessage = (conversation['last_message'] ?? '')
+            .toString()
+            .trim();
+
+        final lastMessageAt = _parseDateTime(conversation['last_message_at']);
+
+        final orderStatus = order?['status']?.toString() ?? 'pending';
 
         loadedConversations.add(
           ConversationData(
             id: conversationId,
             orderId: orderId,
             name: driverName.toString(),
-            lastMessage:
-                lastMessage.isEmpty
-                    ? 'No messages yet'
-                    : lastMessage,
-            orderInfo:
-                _formatOrderId(orderId),
-            timeAgo:
-                _formatTimeAgo(
-              lastMessageAt,
-            ),
-            unreadCount:
-                unreadMap[conversationId] ??
-                    0,
-            type:
-                ConversationType.driver,
-            status:
-                (conversation['status'] ??
-                        'active')
-                    .toString()
-                    .toLowerCase(),
-            lastMessageAt:
-                lastMessageAt,
-            deliveryStatus:
-                _deliveryStatus(
-              orderStatus,
-            ),
+            phone: driverPhone,
+            avatarUrl: driverAvatarUrl,
+            lastMessage: lastMessage.isEmpty ? 'No messages yet' : lastMessage,
+            orderInfo: '',
+            timeAgo: _formatTimeAgo(lastMessageAt),
+            unreadCount: unreadMap[conversationId] ?? 0,
+            type: ConversationType.driver,
+            status: (conversation['status'] ?? 'active')
+                .toString()
+                .toLowerCase(),
+            lastMessageAt: lastMessageAt,
+            deliveryStatus: _deliveryStatus(orderStatus),
           ),
         );
       }
@@ -488,23 +394,15 @@ class _MessagesScreenState extends State<MessagesScreen> {
       // ----------------------------------------------------------
 
       if (supportConversation != null) {
-        final supportId =
-            supportConversation['id']
-                ?.toString();
+        final supportId = supportConversation['id']?.toString();
 
-        if (supportId != null &&
-            supportId.isNotEmpty) {
-          final supportLastMessage =
-              (supportConversation[
-                          'last_message'] ??
-                      '')
-                  .toString()
-                  .trim();
+        if (supportId != null && supportId.isNotEmpty) {
+          final supportLastMessage = (supportConversation['last_message'] ?? '')
+              .toString()
+              .trim();
 
-          final supportLastMessageAt =
-              _parseDateTime(
-            supportConversation[
-                'last_message_at'],
+          final supportLastMessageAt = _parseDateTime(
+            supportConversation['last_message_at'],
           );
 
           loadedConversations.add(
@@ -512,30 +410,19 @@ class _MessagesScreenState extends State<MessagesScreen> {
               id: supportId,
               orderId: null,
               name: 'Aqua In Lavada',
-              lastMessage:
-                  supportLastMessage.isEmpty
-                      ? 'Contact the station for assistance'
-                      : supportLastMessage,
+              phone: '',
+              lastMessage: supportLastMessage.isEmpty
+                  ? 'Contact the station for assistance'
+                  : supportLastMessage,
               orderInfo: 'Station Support',
-              timeAgo:
-                  _formatTimeAgo(
-                supportLastMessageAt,
-              ),
-              unreadCount:
-                  unreadMap[supportId] ??
-                      0,
-              type:
-                  ConversationType.support,
-              status:
-                  (supportConversation[
-                              'status'] ??
-                          'active')
-                      .toString()
-                      .toLowerCase(),
-              lastMessageAt:
-                  supportLastMessageAt,
-              deliveryStatus:
-                  'Station Support',
+              timeAgo: _formatTimeAgo(supportLastMessageAt),
+              unreadCount: unreadMap[supportId] ?? 0,
+              type: ConversationType.support,
+              status: (supportConversation['status'] ?? 'active')
+                  .toString()
+                  .toLowerCase(),
+              lastMessageAt: supportLastMessageAt,
+              deliveryStatus: 'Station Support',
             ),
           );
         }
@@ -545,72 +432,48 @@ class _MessagesScreenState extends State<MessagesScreen> {
       // 9. SORT CONVERSATIONS
       // ==========================================================
 
-      loadedConversations.sort(
-        (a, b) {
-          final aDate =
-              a.lastMessageAt ??
-                  DateTime
-                      .fromMillisecondsSinceEpoch(
-                0,
-              );
+      loadedConversations.sort((a, b) {
+        final aDate = a.lastMessageAt ?? DateTime.fromMillisecondsSinceEpoch(0);
 
-          final bDate =
-              b.lastMessageAt ??
-                  DateTime
-                      .fromMillisecondsSinceEpoch(
-                0,
-              );
+        final bDate = b.lastMessageAt ?? DateTime.fromMillisecondsSinceEpoch(0);
 
-          return bDate.compareTo(
-            aDate,
-          );
-        },
-      );
+        return bDate.compareTo(aDate);
+      });
 
       // ==========================================================
       // 10. ACTIVE DRIVER CONTACTS
       // ==========================================================
 
-      final Map<String, ContactData>
-          contactMap = {};
+      final Map<String, ContactData> contactMap = {};
 
-      for (final conversation
-          in loadedConversations) {
-        if (conversation.type !=
-            ConversationType.driver) {
+      for (final conversation in loadedConversations) {
+        if (conversation.type != ConversationType.driver) {
           continue;
         }
 
-        final key =
-            conversation.name;
+        final key = conversation.name;
 
         if (!contactMap.containsKey(key)) {
           contactMap[key] = ContactData(
             name: conversation.name,
-            orderInfo:
-                conversation.orderInfo,
-            type:
-                ConversationType.driver,
-            unreadCount:
-                conversation.unreadCount,
-            conversationId:
-                conversation.id,
+            phone: conversation.phone,
+            avatarUrl: conversation.avatarUrl,
+            orderInfo: conversation.orderInfo,
+            type: ConversationType.driver,
+            unreadCount: conversation.unreadCount,
+            conversationId: conversation.id,
           );
         } else {
-          final existing =
-              contactMap[key]!;
+          final existing = contactMap[key]!;
 
-          contactMap[key] =
-              ContactData(
+          contactMap[key] = ContactData(
             name: existing.name,
-            orderInfo:
-                existing.orderInfo,
+            phone: existing.phone,
+            avatarUrl: existing.avatarUrl,
+            orderInfo: existing.orderInfo,
             type: existing.type,
-            unreadCount:
-                existing.unreadCount +
-                    conversation.unreadCount,
-            conversationId:
-                existing.conversationId,
+            unreadCount: existing.unreadCount + conversation.unreadCount,
+            conversationId: existing.conversationId,
           );
         }
       }
@@ -622,11 +485,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
       if (!mounted) return;
 
       setState(() {
-        _conversations =
-            loadedConversations;
+        _conversations = loadedConversations;
 
-        _contacts =
-            contactMap.values.toList();
+        _contacts = contactMap.values.toList();
 
         _isLoading = false;
       });
@@ -636,13 +497,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
         '${loadedConversations.length} conversations.',
       );
     } catch (e, stackTrace) {
-      debugPrint(
-        'MessagesScreen: Failed to load conversations: $e',
-      );
+      debugPrint('MessagesScreen: Failed to load conversations: $e');
 
-      debugPrint(
-        stackTrace.toString(),
-      );
+      debugPrint(stackTrace.toString());
 
       if (!mounted) return;
 
@@ -676,8 +533,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   Future<void> _loadConversationsSilently() async {
     try {
-      final user =
-          supabase.auth.currentUser;
+      final user = supabase.auth.currentUser;
 
       if (user == null) {
         return;
@@ -685,9 +541,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
       await _loadConversations();
     } catch (e) {
-      debugPrint(
-        'MessagesScreen silent refresh error: $e',
-      );
+      debugPrint('MessagesScreen silent refresh error: $e');
     }
   }
 
@@ -695,9 +549,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
   // OPEN CONVERSATION
   // ============================================================
 
-  void _openConversation(
-    ConversationData conversation,
-  ) {
+  void _openConversation(ConversationData conversation) {
     // IMPORTANT:
     // Never pass an empty conversationId.
     //
@@ -708,13 +560,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
     // That was the main reason the chat was empty.
 
     if (conversation.id.trim().isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Conversation is not available.',
-          ),
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Conversation is not available.')),
       );
 
       return;
@@ -723,9 +570,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
     Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => ChatScreen(
-          conversationId: conversation.id,
-        ),
+        builder: (_) => ChatScreen(conversationId: conversation.id),
       ),
     ).then((_) {
       _refreshConversations();
@@ -736,35 +581,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
   // HELPERS
   // ============================================================
 
-  String _formatOrderId(
-    String id,
-  ) {
-    if (id.isEmpty) {
-      return 'Order';
-    }
-
-    final cleanId =
-        id.toUpperCase();
-
-    if (cleanId.startsWith('ORD-')) {
-      return cleanId;
-    }
-
-    final shortId =
-        cleanId.length > 6
-            ? cleanId.substring(
-                cleanId.length - 6,
-              )
-            : cleanId;
-
-    return 'Order #$shortId';
-  }
-
-  String _deliveryStatus(
-    String status,
-  ) {
-    final value =
-        status.toLowerCase().trim();
+  String _deliveryStatus(String status) {
+    final value = status.toLowerCase().trim();
 
     switch (value) {
       case 'out_for_delivery':
@@ -793,34 +611,26 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
-  DateTime? _parseDateTime(
-    dynamic value,
-  ) {
+  DateTime? _parseDateTime(dynamic value) {
     if (value == null) {
       return null;
     }
 
     try {
-      return DateTime.parse(
-        value.toString(),
-      ).toLocal();
+      return DateTime.parse(value.toString()).toLocal();
     } catch (_) {
       return null;
     }
   }
 
-  String _formatTimeAgo(
-    DateTime? dateTime,
-  ) {
+  String _formatTimeAgo(DateTime? dateTime) {
     if (dateTime == null) {
       return '';
     }
 
-    final now =
-        DateTime.now();
+    final now = DateTime.now();
 
-    final difference =
-        now.difference(dateTime);
+    final difference = now.difference(dateTime);
 
     if (difference.isNegative) {
       return 'now';
@@ -850,31 +660,21 @@ class _MessagesScreenState extends State<MessagesScreen> {
   // ============================================================
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
-    final filtered =
-        _filteredConversations;
+  Widget build(BuildContext context) {
+    final filtered = _filteredConversations;
 
     return Scaffold(
-      backgroundColor:
-          _background,
+      backgroundColor: _background,
 
       appBar: AppBar(
-        automaticallyImplyLeading:
-            false,
+        automaticallyImplyLeading: false,
 
         title: const Text(
           'Messages',
-          style: TextStyle(
-            fontWeight:
-                FontWeight.w700,
-            color: _darkText,
-          ),
+          style: TextStyle(fontWeight: FontWeight.w700, color: _darkText),
         ),
 
-        backgroundColor:
-            _background,
+        backgroundColor: _background,
 
         elevation: 0,
 
@@ -882,92 +682,61 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
         actions: [
           IconButton(
-            icon: const Icon(
-              Icons.refresh_rounded,
-              color:
-                  Color(0xFF334155),
-            ),
-            onPressed: () async {
-              await _loadConversations();
-            },
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: _loadConversations,
           ),
-
-          const SizedBox(width: 8),
         ],
       ),
 
       body: SafeArea(
         child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
 
           children: [
             // ======================================================
             // SEARCH
             // ======================================================
-
             Padding(
-              padding:
-                  const EdgeInsets.fromLTRB(
-                16,
-                0,
-                16,
-                14,
-              ),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
 
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(
+                padding: const EdgeInsets.symmetric(
                   horizontal: 14,
                   vertical: 2,
                 ),
 
-                decoration:
-                    BoxDecoration(
+                decoration: BoxDecoration(
                   color: Colors.white,
 
-                  borderRadius:
-                      BorderRadius.circular(
-                    12,
-                  ),
+                  borderRadius: BorderRadius.circular(12),
 
                   border: Border.all(
-                    color:
-                        const Color(
-                      0xFFE2E8F0,
-                    ),
+                    color: const Color(0xFFE2E8F0),
                     width: 0.5,
                   ),
                 ),
 
                 child: TextField(
-                  decoration:
-                      const InputDecoration(
-                    border:
-                        InputBorder.none,
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
 
                     icon: Icon(
                       Icons.search_rounded,
-                      color:
-                          Color(0xFF94A3B8),
+                      color: Color(0xFF94A3B8),
                       size: 20,
                     ),
 
-                    hintText:
-                        'Search conversations...',
+                    hintText: 'Search conversations...',
 
-                    hintStyle:
-                        TextStyle(
+                    hintStyle: TextStyle(
                       fontSize: 13,
-                      color:
-                          Color(0xFF94A3B8),
+                      color: Color(0xFF94A3B8),
                     ),
                   ),
 
                   onChanged: (value) {
                     setState(() {
-                      _searchQuery =
-                          value;
+                      _searchQuery = value;
                     });
                   },
                 ),
@@ -977,26 +746,19 @@ class _MessagesScreenState extends State<MessagesScreen> {
             // ======================================================
             // ACTIVE DRIVERS
             // ======================================================
-
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 16,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
 
               child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
 
                 children: [
                   const Text(
                     'Active Deliveries',
                     style: TextStyle(
                       fontSize: 15,
-                      fontWeight:
-                          FontWeight.w700,
-                      color:
-                          _darkText,
+                      fontWeight: FontWeight.w700,
+                      color: _darkText,
                     ),
                   ),
 
@@ -1005,295 +767,192 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         ? 'See all'
                         : '${_contacts.length} contact${_contacts.length == 1 ? '' : 's'}',
 
-                    style:
-                        const TextStyle(
+                    style: const TextStyle(
                       fontSize: 12,
-                      color:
-                          _primaryBlue,
-                      fontWeight:
-                          FontWeight.w600,
+                      color: _primaryBlue,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(
-              height: 12,
-            ),
+            const SizedBox(height: 12),
 
             SizedBox(
-              height: 132,
+              height: 148,
 
               child: _contacts.isEmpty
                   ? const Padding(
-                      padding:
-                          EdgeInsets.symmetric(
-                        horizontal: 16,
-                      ),
+                      padding: EdgeInsets.symmetric(horizontal: 16),
                       child: Align(
-                        alignment:
-                            Alignment.centerLeft,
+                        alignment: Alignment.centerLeft,
                         child: Text(
                           'No active deliveries.',
-                          style:
-                              TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color:
-                                Color(
-                              0xFF94A3B8,
-                            ),
+                            color: Color(0xFF94A3B8),
                           ),
                         ),
                       ),
                     )
-
                   : ListView.separated(
-                      padding:
-                          const EdgeInsets
-                              .symmetric(
-                        horizontal: 16,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
 
-                      scrollDirection:
-                          Axis.horizontal,
+                      scrollDirection: Axis.horizontal,
 
-                      itemCount:
-                          _contacts.length,
+                      itemCount: _contacts.length,
 
-                      separatorBuilder:
-                          (_, __) =>
-                              const SizedBox(
-                        width: 12,
-                      ),
+                      separatorBuilder: (_, __) => const SizedBox(width: 12),
 
-                      itemBuilder:
-                          (context, index) {
-                        final contact =
-                            _contacts[index];
+                      itemBuilder: (context, index) {
+                        final contact = _contacts[index];
 
-                        ConversationData?
-                            conversation;
+                        ConversationData? conversation;
 
-                        for (final item
-                            in _conversations) {
-                          if (item.id ==
-                              contact
-                                  .conversationId) {
-                            conversation =
-                                item;
+                        for (final item in _conversations) {
+                          if (item.id == contact.conversationId) {
+                            conversation = item;
                             break;
                           }
                         }
 
-                        if (conversation ==
-                            null) {
+                        if (conversation == null) {
                           return const SizedBox();
                         }
 
                         return DriverAvatarWidget(
-                          contact:
-                              contact,
+                          contact: contact,
 
                           onTap: () {
-                            _openConversation(
-                              conversation!,
-                            );
+                            _openConversation(conversation!);
                           },
                         );
                       },
                     ),
             ),
 
-            const SizedBox(
-              height: 18,
-            ),
+            const SizedBox(height: 18),
 
             // ======================================================
             // CONVERSATIONS HEADER
             // ======================================================
-
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 16,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
 
               child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
 
                 children: [
                   const Text(
                     'Conversations',
                     style: TextStyle(
                       fontSize: 15,
-                      fontWeight:
-                          FontWeight.w700,
-                      color:
-                          _darkText,
+                      fontWeight: FontWeight.w700,
+                      color: _darkText,
                     ),
                   ),
 
                   if (_totalUnread > 0)
                     Container(
-                      padding:
-                          const EdgeInsets.symmetric(
+                      padding: const EdgeInsets.symmetric(
                         horizontal: 8,
                         vertical: 3,
                       ),
 
-                      decoration:
-                          BoxDecoration(
-                        color:
-                            const Color(
-                          0xFFDBEAFE,
-                        ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDBEAFE),
 
-                        borderRadius:
-                            BorderRadius.circular(
-                          20,
-                        ),
+                        borderRadius: BorderRadius.circular(20),
                       ),
 
                       child: Text(
                         '$_totalUnread unread',
 
-                        style:
-                            const TextStyle(
+                        style: const TextStyle(
                           fontSize: 11,
-                          fontWeight:
-                              FontWeight.w700,
-                          color:
-                              Color(
-                            0xFF1D4ED8,
-                          ),
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1D4ED8),
                         ),
                       ),
                     )
                   else
                     const Text(
                       '0 unread',
-                      style:
-                          TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
-                        fontWeight:
-                            FontWeight.w600,
-                        color:
-                            _primaryBlue,
+                        fontWeight: FontWeight.w600,
+                        color: _primaryBlue,
                       ),
                     ),
                 ],
               ),
             ),
 
-            const SizedBox(
-              height: 10,
-            ),
+            const SizedBox(height: 10),
 
             // ======================================================
             // CONVERSATION LIST
             // ======================================================
-
             Expanded(
-              child:
-                  RefreshIndicator(
-                color:
-                    _primaryBlue,
+              child: RefreshIndicator(
+                color: _primaryBlue,
 
-                onRefresh:
-                    _loadConversations,
+                onRefresh: _loadConversations,
 
                 child: _isLoading
                     ? const Center(
-                        child:
-                            CircularProgressIndicator(
-                          color:
-                              _primaryBlue,
-                        ),
+                        child: CircularProgressIndicator(color: _primaryBlue),
                       )
-
                     : filtered.isEmpty
-                        ? ListView(
-                            physics:
-                                const AlwaysScrollableScrollPhysics(),
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
 
-                            children: [
-                              const SizedBox(
-                                height: 100,
-                              ),
+                        children: [
+                          const SizedBox(height: 100),
 
-                              const Icon(
-                                Icons
-                                    .chat_bubble_outline_rounded,
-                                size: 55,
-                                color:
-                                    Color(
-                                  0xFFCBD5E1,
-                                ),
-                              ),
-
-                              const SizedBox(
-                                height: 14,
-                              ),
-
-                              Center(
-                                child: Text(
-                                  _searchQuery
-                                          .isNotEmpty
-                                      ? 'No conversations found'
-                                      : 'No conversations yet',
-
-                                  style:
-                                      const TextStyle(
-                                    color:
-                                        Color(
-                                      0xFF64748B,
-                                    ),
-                                    fontSize:
-                                        15,
-                                    fontWeight:
-                                        FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          )
-
-                        : ListView.builder(
-                            physics:
-                                const AlwaysScrollableScrollPhysics(),
-
-                            padding:
-                                const EdgeInsets
-                                    .fromLTRB(
-                              12,
-                              0,
-                              12,
-                              12,
-                            ),
-
-                            itemCount:
-                                filtered.length,
-
-                            itemBuilder:
-                                (context, index) {
-                              final conversation =
-                                  filtered[
-                                      index];
-
-                              return ConversationItemWidget(
-                                conversation:
-                                    conversation,
-
-                                onTap: () {
-                                  _openConversation(
-                                    conversation,
-                                  );
-                                },
-                              );
-                            },
+                          const Icon(
+                            Icons.chat_bubble_outline_rounded,
+                            size: 55,
+                            color: Color(0xFFCBD5E1),
                           ),
+
+                          const SizedBox(height: 14),
+
+                          Center(
+                            child: Text(
+                              _searchQuery.isNotEmpty
+                                  ? 'No conversations found'
+                                  : 'No conversations yet',
+
+                              style: const TextStyle(
+                                color: Color(0xFF64748B),
+                                fontSize: 15,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    : ListView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
+
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+
+                        itemCount: filtered.length,
+
+                        itemBuilder: (context, index) {
+                          final conversation = filtered[index];
+
+                          return ConversationItemWidget(
+                            conversation: conversation,
+
+                            onTap: () {
+                              _openConversation(conversation);
+                            },
+                          );
+                        },
+                      ),
               ),
             ),
           ],
@@ -1307,10 +966,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 // ENUM
 // ============================================================================
 
-enum ConversationType {
-  driver,
-  support,
-}
+enum ConversationType { driver, support }
 
 // ============================================================================
 // CONTACT DATA
@@ -1319,6 +975,8 @@ enum ConversationType {
 class ContactData {
   const ContactData({
     required this.name,
+    this.phone = '',
+    this.avatarUrl = '',
     required this.orderInfo,
     required this.type,
     required this.unreadCount,
@@ -1326,6 +984,10 @@ class ContactData {
   });
 
   final String name;
+
+  final String phone;
+
+  final String avatarUrl;
   final String orderInfo;
   final ConversationType type;
   final int unreadCount;
@@ -1341,6 +1003,8 @@ class ConversationData {
     required this.id,
     required this.orderId,
     required this.name,
+    this.phone = '',
+    this.avatarUrl = '',
     required this.lastMessage,
     required this.orderInfo,
     required this.timeAgo,
@@ -1356,6 +1020,10 @@ class ConversationData {
   final String? orderId;
 
   final String name;
+
+  final String phone;
+
+  final String avatarUrl;
 
   final String lastMessage;
 
@@ -1378,8 +1046,7 @@ class ConversationData {
 // DRIVER AVATAR
 // ============================================================================
 
-class DriverAvatarWidget
-    extends StatelessWidget {
+class DriverAvatarWidget extends StatelessWidget {
   const DriverAvatarWidget({
     super.key,
     required this.contact,
@@ -1390,11 +1057,8 @@ class DriverAvatarWidget
   final VoidCallback onTap;
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
-    final bool hasUnread =
-        contact.unreadCount > 0;
+  Widget build(BuildContext context) {
+    final bool hasUnread = contact.unreadCount > 0;
 
     return GestureDetector(
       onTap: onTap,
@@ -1403,62 +1067,42 @@ class DriverAvatarWidget
         width: 88,
 
         child: Column(
-          mainAxisSize:
-              MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
 
           children: [
             Stack(
-              clipBehavior:
-                  Clip.none,
+              clipBehavior: Clip.none,
 
               children: [
                 Container(
-                  padding:
-                      const EdgeInsets.all(
-                    2,
-                  ),
+                  padding: const EdgeInsets.all(2),
 
-                  decoration:
-                      BoxDecoration(
-                    shape:
-                        BoxShape.circle,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
 
-                    border:
-                        Border.all(
-                      color:
-                              _primaryBlue,
-                      width: 2,
-                    ),
+                    border: Border.all(color: _primaryBlue, width: 2),
 
                     boxShadow: const [
                       BoxShadow(
-                        color:
-                            Color(
-                          0x332563EB,
-                        ),
+                        color: Color(0x332563EB),
                         blurRadius: 12,
                         spreadRadius: 1,
                       ),
                     ],
                   ),
 
-                  child:
-                      const CircleAvatar(
+                  child: CircleAvatar(
                     radius: 25,
-
-                    backgroundColor:
-                        Color(
-                      0xFFEFF6FF,
-                    ),
-
-                    child: Icon(
-                      Icons
-                          .local_shipping_outlined,
-                      color:
-                          Color(
-                        0xFF2563EB,
-                      ),
-                    ),
+                    backgroundColor: Color(0xFFEFF6FF),
+                    backgroundImage: contact.avatarUrl.isEmpty
+                        ? null
+                        : NetworkImage(contact.avatarUrl),
+                    child: contact.avatarUrl.isEmpty
+                        ? const Icon(
+                            Icons.local_shipping_outlined,
+                            color: Color(0xFF2563EB),
+                          )
+                        : null,
                   ),
                 ),
 
@@ -1467,27 +1111,17 @@ class DriverAvatarWidget
                     top: 0,
                     right: 2,
 
-                    child:
-                        Container(
+                    child: Container(
                       width: 13,
                       height: 13,
 
-                      decoration:
-                          BoxDecoration(
-                        color:
-                            const Color(
-                          0xFFEF4444,
-                        ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEF4444),
 
-                        shape:
-                            BoxShape.circle,
+                        shape: BoxShape.circle,
 
-                        border:
-                            Border.all(
-                          color:
-                              const Color(
-                            0xFFF1F5F9,
-                          ),
+                        border: Border.all(
+                          color: const Color(0xFFF1F5F9),
                           width: 2,
                         ),
                       ),
@@ -1496,91 +1130,44 @@ class DriverAvatarWidget
               ],
             ),
 
-            const SizedBox(
-              height: 8,
-            ),
+            const SizedBox(height: 8),
 
             Text(
               contact.name,
 
               maxLines: 1,
 
-              overflow:
-                  TextOverflow.ellipsis,
+              overflow: TextOverflow.ellipsis,
 
-              textAlign:
-                  TextAlign.center,
+              textAlign: TextAlign.center,
 
-              style:
-                  const TextStyle(
+              style: const TextStyle(
                 fontSize: 12,
-                fontWeight:
-                    FontWeight.w700,
-                color:
-                    Color(0xFF0F172A),
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF0F172A),
               ),
             ),
 
-            const SizedBox(
-              height: 2,
-            ),
+            const SizedBox(height: 2),
 
-            Text(
-              contact.orderInfo,
-
-              maxLines: 1,
-
-              overflow:
-                  TextOverflow.ellipsis,
-
-              textAlign:
-                  TextAlign.center,
-
-              style:
-                  const TextStyle(
-                fontSize: 10,
-                color:
-                    Color(0xFF94A3B8),
-              ),
-            ),
-
-            const SizedBox(
-              height: 4,
-            ),
+            const SizedBox(height: 4),
 
             Container(
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 2,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+
+              decoration: BoxDecoration(
+                color: const Color(0xFFDBEAFE),
+
+                borderRadius: BorderRadius.circular(10),
               ),
 
-              decoration:
-                  BoxDecoration(
-                color:
-                    const Color(
-                  0xFFDBEAFE,
-                ),
-
-                borderRadius:
-                    BorderRadius.circular(
-                  10,
-                ),
-              ),
-
-              child:
-                  const Text(
+              child: const Text(
                 'Active',
 
-                style:
-                    TextStyle(
+                style: TextStyle(
                   fontSize: 10,
-                  fontWeight:
-                      FontWeight.w700,
-                  color:
-                      Color(
-                    0xFF1D4ED8,
-                  ),
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1D4ED8),
                 ),
               ),
             ),
@@ -1595,8 +1182,7 @@ class DriverAvatarWidget
 // CONVERSATION ITEM
 // ============================================================================
 
-class ConversationItemWidget
-    extends StatelessWidget {
+class ConversationItemWidget extends StatelessWidget {
   const ConversationItemWidget({
     super.key,
     required this.conversation,
@@ -1606,103 +1192,50 @@ class ConversationItemWidget
   final ConversationData conversation;
   final VoidCallback onTap;
 
-  bool get _isSupport =>
-      conversation.type ==
-      ConversationType.support;
+  bool get _isSupport => conversation.type == ConversationType.support;
 
-  bool get _isDelivered {
-    final message =
-        conversation.lastMessage
-            .toLowerCase();
-
-    return message.contains(
-          'delivered',
-        ) ||
-        message.contains(
-          'delivered na',
-        );
-  }
-
-  bool get _isArchived =>
-      conversation.status ==
-      'archived';
+  bool get _isArchived => conversation.status == 'archived';
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
-    final bool hasUnread =
-        conversation.unreadCount > 0;
+  Widget build(BuildContext context) {
+    final bool hasUnread = conversation.unreadCount > 0;
+    final bool isDelivered =
+        conversation.deliveryStatus.toLowerCase() == 'delivered';
 
-    final Color accentColor =
-        _isSupport
-            ? const Color(
-                0xFFF97316,
-              )
-            : const Color(
-                0xFF2563EB,
-              );
+    final Color accentColor = _isSupport
+        ? const Color(0xFFF97316)
+        : const Color(0xFF2563EB);
 
-    final Color avatarBackground =
-        _isSupport
-            ? const Color(
-                0xFFFFF7ED,
-              )
-            : const Color(
-                0xFFEFF6FF,
-              );
+    final Color avatarBackground = _isSupport
+        ? const Color(0xFFFFF7ED)
+        : const Color(0xFFEFF6FF);
 
     return Padding(
-      padding:
-          const EdgeInsets.only(
-        bottom: 8,
-      ),
+      padding: const EdgeInsets.only(bottom: 8),
 
       child: Material(
         color: Colors.white,
 
-        borderRadius:
-            BorderRadius.circular(
-          14,
-        ),
+        borderRadius: BorderRadius.circular(14),
 
         child: InkWell(
-          borderRadius:
-              BorderRadius.circular(
-            14,
-          ),
+          borderRadius: BorderRadius.circular(14),
 
           onTap: onTap,
 
           child: Container(
-            padding:
-                const EdgeInsets.all(
-              12,
-            ),
+            padding: const EdgeInsets.all(12),
 
-            decoration:
-                BoxDecoration(
-              borderRadius:
-                  BorderRadius.circular(
-                14,
-              ),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
 
-              border:
-                  Border.all(
-                color:
-                    const Color(
-                  0xFFF1F5F9,
-                ),
-                width: 0.5,
-              ),
+              border: Border.all(color: const Color(0xFFF1F5F9), width: 0.5),
 
               boxShadow: const [
                 BoxShadow(
-                  color:
-                      Color(0x0A233455),
+                  color: Color(0x0A233455),
                   blurRadius: 10,
-                  offset:
-                      Offset(0, 3),
+                  offset: Offset(0, 3),
                 ),
               ],
             ),
@@ -1712,58 +1245,42 @@ class ConversationItemWidget
                 // ========================================================
                 // ACCENT
                 // ========================================================
-
                 Container(
                   width: 3,
                   height: 60,
 
-                  margin:
-                      const EdgeInsets.only(
-                    right: 10,
-                  ),
+                  margin: const EdgeInsets.only(right: 10),
 
-                  decoration:
-                      BoxDecoration(
-                    color: hasUnread
-                        ? accentColor
-                        : const Color(
-                            0xFFE2E8F0,
-                          ),
+                  decoration: BoxDecoration(
+                    color: hasUnread ? accentColor : const Color(0xFFE2E8F0),
 
-                    borderRadius:
-                        BorderRadius.circular(
-                      4,
-                    ),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 ),
 
                 // ========================================================
                 // AVATAR
                 // ========================================================
-
                 Stack(
-                  clipBehavior:
-                      Clip.none,
+                  clipBehavior: Clip.none,
 
                   children: [
                     CircleAvatar(
                       radius: 24,
-
-                      backgroundColor:
-                          avatarBackground,
-
-                      child: Icon(
-                        _isSupport
-                            ? Icons
-                                .support_agent_rounded
-                            : Icons
-                                .local_shipping_outlined,
-
-                        color:
-                            accentColor,
-
-                        size: 21,
-                      ),
+                      backgroundColor: avatarBackground,
+                      backgroundImage:
+                          !_isSupport && conversation.avatarUrl.isNotEmpty
+                          ? NetworkImage(conversation.avatarUrl)
+                          : null,
+                      child: _isSupport || conversation.avatarUrl.isEmpty
+                          ? Icon(
+                              _isSupport
+                                  ? Icons.support_agent_rounded
+                                  : Icons.local_shipping_outlined,
+                              color: accentColor,
+                              size: 21,
+                            )
+                          : null,
                     ),
 
                     if (hasUnread)
@@ -1771,430 +1288,220 @@ class ConversationItemWidget
                         top: -1,
                         right: -1,
 
-                        child:
-                            Container(
+                        child: Container(
                           width: 12,
                           height: 12,
 
-                          decoration:
-                              BoxDecoration(
-                            color:
-                                const Color(
-                              0xFFEF4444,
-                            ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444),
 
-                            shape:
-                                BoxShape.circle,
+                            shape: BoxShape.circle,
 
-                            border:
-                                Border.all(
-                              color:
-                                  Colors.white,
-                              width: 1.5,
-                            ),
+                            border: Border.all(color: Colors.white, width: 1.5),
                           ),
                         ),
                       ),
                   ],
                 ),
 
-                const SizedBox(
-                  width: 12,
-                ),
+                const SizedBox(width: 12),
 
                 // ========================================================
                 // CONTENT
                 // ========================================================
-
                 Expanded(
                   child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment
-                            .start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
 
                     children: [
                       Row(
                         children: [
                           Expanded(
-                            child:
-                                Text(
-                              conversation
-                                  .name,
+                            child: Text(
+                              conversation.name,
 
-                              maxLines:
-                                  1,
+                              maxLines: 1,
 
-                              overflow:
-                                  TextOverflow
-                                      .ellipsis,
+                              overflow: TextOverflow.ellipsis,
 
-                              style:
-                                  TextStyle(
-                                fontSize:
-                                    14,
+                              style: TextStyle(
+                                fontSize: 14,
 
-                                fontWeight:
-                                    hasUnread
-                                        ? FontWeight
-                                            .w700
-                                        : FontWeight
-                                            .w600,
+                                fontWeight: hasUnread
+                                    ? FontWeight.w700
+                                    : FontWeight.w600,
 
-                                color:
-                                    const Color(
-                                  0xFF0F172A,
-                                ),
+                                color: const Color(0xFF0F172A),
                               ),
                             ),
                           ),
 
-                          const SizedBox(
-                            width: 8,
-                          ),
+                          const SizedBox(width: 8),
 
                           Text(
-                            conversation
-                                .timeAgo,
-
-                            style:
-                                const TextStyle(
-                              fontSize:
-                                  11,
-                              color:
-                                  Color(
-                                0xFF94A3B8,
-                              ),
-                              fontWeight:
-                                  FontWeight
-                                      .w500,
+                            conversation.timeAgo,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF94A3B8),
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
                       ),
 
-                      const SizedBox(
-                        height: 3,
-                      ),
+                      const SizedBox(height: 3),
 
                       Text(
-                        conversation
-                            .lastMessage,
+                        conversation.lastMessage,
 
-                        maxLines:
-                            1,
+                        maxLines: 1,
 
-                        overflow:
-                            TextOverflow
-                                .ellipsis,
+                        overflow: TextOverflow.ellipsis,
 
-                        style:
-                            TextStyle(
-                          fontSize:
-                              12,
+                        style: TextStyle(
+                          fontSize: 12,
 
-                          color:
-                              hasUnread
-                                  ? const Color(
-                                      0xFF0F172A,
-                                    )
-                                  : const Color(
-                                      0xFF475569,
-                                    ),
+                          color: hasUnread
+                              ? const Color(0xFF0F172A)
+                              : const Color(0xFF475569),
 
-                          fontWeight:
-                              hasUnread
-                                  ? FontWeight
-                                      .w600
-                                  : FontWeight
-                                      .w400,
+                          fontWeight: hasUnread
+                              ? FontWeight.w600
+                              : FontWeight.w400,
                         ),
                       ),
 
-                      const SizedBox(
-                        height: 5,
-                      ),
+                      const SizedBox(height: 5),
 
                       Row(
                         children: [
-                          // ==================================================
-                          // SUPPORT BADGE
-                          // ==================================================
+                          Expanded(
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: [
+                                // ==================================================
+                                // SUPPORT BADGE
+                                // ==================================================
+                                if (_isSupport)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 7,
+                                      vertical: 3,
+                                    ),
 
-                          if (_isSupport)
-                            Container(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                horizontal:
-                                    7,
-                                vertical:
-                                    3,
-                              ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFEDD5),
 
-                              decoration:
-                                  BoxDecoration(
-                                color:
-                                    const Color(
-                                  0xFFFFEDD5,
-                                ),
+                                      borderRadius: BorderRadius.circular(7),
+                                    ),
 
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                  7,
-                                ),
-                              ),
+                                    child: const Text(
+                                      'Station Support',
 
-                              child:
-                                  const Text(
-                                'Station Support',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: Color(0xFFEA580C),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  )
+                                // ==================================================
+                                // ORDER BADGE
+                                // ==================================================
+                                else if (conversation.orderInfo.isNotEmpty)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
 
-                                style:
-                                    TextStyle(
-                                  fontSize:
-                                      10,
-                                  color:
-                                      Color(
-                                    0xFFEA580C,
-                                  ),
-                                  fontWeight:
-                                      FontWeight
-                                          .w600,
-                                ),
-                              ),
-                            )
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFDBEAFE),
 
-                          // ==================================================
-                          // ORDER BADGE
-                          // ==================================================
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
 
-                          else
-                            Container(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                horizontal:
-                                    6,
-                                vertical:
-                                    2,
-                              ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
 
-                              decoration:
-                                  BoxDecoration(
-                                color:
-                                    const Color(
-                                  0xFFDBEAFE,
-                                ),
+                                      children: [
+                                        const Icon(
+                                          Icons.receipt_long_outlined,
 
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                  6,
-                                ),
-                              ),
+                                          size: 10,
 
-                              child:
-                                  Row(
-                                mainAxisSize:
-                                    MainAxisSize
-                                        .min,
+                                          color: Color(0xFF2563EB),
+                                        ),
 
-                                children: [
-                                  const Icon(
-                                    Icons
-                                        .receipt_long_outlined,
+                                        const SizedBox(width: 3),
 
-                                    size:
-                                        10,
+                                        Text(
+                                          conversation.orderInfo,
 
-                                    color:
-                                        Color(
-                                      0xFF2563EB,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            color: Color(0xFF2563EB),
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
 
-                                  const SizedBox(
-                                    width: 3,
-                                  ),
+                                // ==================================================
+                                // ARCHIVED
+                                // ==================================================
+                                if (_isArchived) ...[
+                                  const SizedBox(width: 6),
 
-                                  Text(
-                                    conversation
-                                        .orderInfo,
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
 
-                                    style:
-                                        const TextStyle(
-                                      fontSize:
-                                          10,
-                                      color:
-                                          Color(
-                                        0xFF2563EB,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF1F5F9),
+
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+
+                                    child: const Text(
+                                      'Archived',
+
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: Color(0xFF64748B),
+                                        fontWeight: FontWeight.w600,
                                       ),
-                                      fontWeight:
-                                          FontWeight
-                                              .w600,
                                     ),
                                   ),
                                 ],
-                              ),
+                              ],
                             ),
-
-                          // ==================================================
-                          // DELIVERY STATUS
-                          // ==================================================
-
-                          if (!_isSupport)
-                            ...[
-                              const SizedBox(
-                                width: 6,
-                              ),
-
-                              Container(
-                                padding:
-                                    const EdgeInsets
-                                        .symmetric(
-                                  horizontal:
-                                      6,
-                                  vertical:
-                                      2,
-                                ),
-
-                                decoration:
-                                    BoxDecoration(
-                                  color:
-                                      const Color(
-                                    0xFFDBEAFE,
-                                  ),
-
-                                  borderRadius:
-                                      BorderRadius
-                                          .circular(
-                                    6,
-                                  ),
-                                ),
-
-                                child:
-                                    Text(
-                                  conversation
-                                      .deliveryStatus,
-
-                                  style:
-                                      const TextStyle(
-                                    fontSize:
-                                        10,
-                                    color:
-                                        Color(
-                                      0xFF1D4ED8,
-                                    ),
-                                    fontWeight:
-                                        FontWeight
-                                            .w600,
-                                  ),
-                                ),
-                              ),
-                            ],
-
-                          // ==================================================
-                          // DELIVERED
-                          // ==================================================
-
-                          if (_isDelivered &&
-                              !_isSupport) ...[
-                            const SizedBox(
-                              width: 6,
-                            ),
-
+                          ),
+                          if (!_isSupport) ...[
+                            const SizedBox(width: 6),
                             Container(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                horizontal:
-                                    6,
-                                vertical:
-                                    2,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
                               ),
-
-                              decoration:
-                                  BoxDecoration(
-                                color:
-                                    const Color(
-                                  0xFFDCFCE7,
-                                ),
-
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                  6,
-                                ),
+                              decoration: BoxDecoration(
+                                color: isDelivered
+                                    ? const Color(0xFFDCFCE7)
+                                    : const Color(0xFFDBEAFE),
+                                borderRadius: BorderRadius.circular(7),
                               ),
-
-                              child:
-                                  const Text(
-                                'Delivered',
-
-                                style:
-                                    TextStyle(
-                                  fontSize:
-                                      10,
-                                  color:
-                                      Color(
-                                    0xFF15803D,
-                                  ),
-                                  fontWeight:
-                                      FontWeight
-                                          .w600,
-                                ),
-                              ),
-                            ),
-                          ],
-
-                          // ==================================================
-                          // ARCHIVED
-                          // ==================================================
-
-                          if (_isArchived) ...[
-                            const SizedBox(
-                              width: 6,
-                            ),
-
-                            Container(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                horizontal:
-                                    6,
-                                vertical:
-                                    2,
-                              ),
-
-                              decoration:
-                                  BoxDecoration(
-                                color:
-                                    const Color(
-                                  0xFFF1F5F9,
-                                ),
-
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                  6,
-                                ),
-                              ),
-
-                              child:
-                                  const Text(
-                                'Archived',
-
-                                style:
-                                    TextStyle(
-                                  fontSize:
-                                      10,
-                                  color:
-                                      Color(
-                                    0xFF64748B,
-                                  ),
-                                  fontWeight:
-                                      FontWeight
-                                          .w600,
+                              child: Text(
+                                conversation.deliveryStatus,
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: isDelivered
+                                      ? const Color(0xFF15803D)
+                                      : const Color(0xFF1D4ED8),
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ),
@@ -2205,66 +1512,41 @@ class ConversationItemWidget
                   ),
                 ),
 
-                const SizedBox(
-                  width: 10,
-                ),
+                const SizedBox(width: 10),
 
                 // ========================================================
                 // UNREAD
                 // ========================================================
-
                 if (hasUnread)
                   Container(
-                    constraints:
-                        const BoxConstraints(
-                      minWidth: 22,
-                    ),
+                    constraints: const BoxConstraints(minWidth: 22),
 
                     height: 22,
 
-                    padding:
-                        const EdgeInsets
-                            .symmetric(
-                      horizontal: 6,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+
+                    alignment: Alignment.center,
+
+                    decoration: BoxDecoration(
+                      color: _primaryBlue,
+
+                      borderRadius: BorderRadius.circular(11),
                     ),
 
-                    alignment:
-                        Alignment.center,
-
-                    decoration:
-                        BoxDecoration(
-                      color:
-                          _primaryBlue,
-
-                      borderRadius:
-                          BorderRadius.circular(
-                        11,
-                      ),
-                    ),
-
-                    child:
-                        Text(
+                    child: Text(
                       '${conversation.unreadCount}',
 
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.white,
-                        fontSize:
-                            11,
-                        fontWeight:
-                            FontWeight.w700,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   )
                 else
                   const Icon(
-                    Icons
-                        .chevron_right_rounded,
-                    color:
-                        Color(
-                      0xFFCBD5E1,
-                    ),
+                    Icons.chevron_right_rounded,
+                    color: Color(0xFFCBD5E1),
                   ),
               ],
             ),

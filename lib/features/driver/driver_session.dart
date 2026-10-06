@@ -1,3 +1,4 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DriverSessionData {
@@ -12,9 +13,18 @@ class DriverSession {
 
   static const String _driverIdKey = 'driver_id';
   static const String _driverNameKey = 'driver_name';
+  static const String _driverAccessCodeKey = 'driver_access_code';
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
 
   static String? id;
   static String? name;
+  static String? accessCode;
+
+  static Future<String?> getAccessCode() async {
+    final storedCode = await _secureStorage.read(key: _driverAccessCodeKey);
+    accessCode = storedCode;
+    return storedCode;
+  }
 
   static Future<String?> getDriverId() async {
     final prefs = await SharedPreferences.getInstance();
@@ -26,13 +36,19 @@ class DriverSession {
   static Future<void> save({
     required String driverId,
     required String driverName,
+    required String driverAccessCode,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_driverIdKey, driverId);
     await prefs.setString(_driverNameKey, driverName);
+    await _secureStorage.write(
+      key: _driverAccessCodeKey,
+      value: driverAccessCode,
+    );
 
     id = driverId;
     name = driverName;
+    accessCode = driverAccessCode;
   }
 
   static Future<DriverSessionData?> load() async {
@@ -60,8 +76,10 @@ class DriverSession {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_driverIdKey);
     await prefs.remove(_driverNameKey);
+    await _secureStorage.delete(key: _driverAccessCodeKey);
 
     id = null;
     name = null;
+    accessCode = null;
   }
 }

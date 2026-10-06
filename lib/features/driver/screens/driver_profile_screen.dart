@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 import 'package:aqua_in_laba_app/features/auth/services/logout_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -22,6 +25,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
   static const Color _primaryBlue = Color(0xFF2563EB);
 
   late Future<_DriverProfileData> _profileFuture;
+  bool _isUploadingPhoto = false;
 
   @override
   void initState() {
@@ -29,17 +33,121 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     _profileFuture = _loadProfileData();
   }
 
+  Future<void> _changeProfilePhoto() async {
+    final driverId = await DriverSession.getDriverId();
+    if (driverId == null || driverId.trim().isEmpty) {
+      _showPhotoError('Driver session not found. Please sign in again.');
+      return;
+    }
+    String? accessCode;
+    try {
+      accessCode = await DriverSession.getAccessCode();
+    } catch (error) {
+      debugPrint('Unable to read the saved driver access code: $error');
+      _showPhotoError(
+        'Please close and reopen the app before changing your photo.',
+      );
+      return;
+    }
+    if (accessCode == null || accessCode.isEmpty) {
+      _showPhotoError(
+        'Please sign out and sign in again to update your photo.',
+      );
+      return;
+    }
+    if (!mounted) return;
+
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from gallery'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take a photo'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+
+    try {
+      final image = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 1200,
+      );
+      if (image == null || !mounted) return;
+
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+      if (bytes.lengthInBytes > 5 * 1024 * 1024) {
+        _showPhotoError('Choose an image smaller than 5 MB.');
+        return;
+      }
+      if (!mounted) return;
+
+      final contentType = image.mimeType == 'image/png'
+          ? 'image/png'
+          : image.mimeType == 'image/webp'
+          ? 'image/webp'
+          : 'image/jpeg';
+
+      setState(() => _isUploadingPhoto = true);
+      final response = await Supabase.instance.client.functions.invoke(
+        'driver-profile-photo',
+        body: {
+          'driver_id': driverId,
+          'access_code': accessCode,
+          'image_base64': base64Encode(bytes),
+          'content_type': contentType,
+        },
+      );
+      final responseData = response.data;
+      if (responseData is! Map || responseData['avatar_url'] == null) {
+        throw Exception('The upload service returned an invalid response.');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _profileFuture = _loadProfileData();
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Profile photo updated.')));
+    } catch (error) {
+      _showPhotoError('Unable to upload profile photo: $error');
+    } finally {
+      if (mounted) setState(() => _isUploadingPhoto = false);
+    }
+  }
+
+  void _showPhotoError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<_DriverProfileData> _loadProfileData() async {
     final session = await DriverSession.load();
     final authUser = Supabase.instance.client.auth.currentUser;
 
     String name = session == null
-      ? (DriverSession.name?.trim() ?? '')
-      : session.name.trim();
+        ? (DriverSession.name?.trim() ?? '')
+        : session.name.trim();
     String email = authUser?.email?.trim() ?? '';
     String employeeId = session == null
-      ? (DriverSession.id?.trim() ?? '')
-      : session.id.trim();
+        ? (DriverSession.id?.trim() ?? '')
+        : session.id.trim();
+    var avatarUrl = '';
 
     if (employeeId.isNotEmpty) {
       try {
@@ -73,6 +181,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
           if (profileEmployeeId.isNotEmpty) {
             employeeId = profileEmployeeId;
           }
+          avatarUrl = _firstNonEmptyString(response['profile_image_url']);
         }
       } catch (error) {
         debugPrint('Failed to load driver profile data: $error');
@@ -104,35 +213,36 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
 
         final todayOrders = driverIds.length == 1
             ? await supabase
-                .from('orders')
-                .select('status')
-                .eq('driver_id', driverIds.first)
-                .gte('created_at', today)
+                  .from('orders')
+                  .select('status')
+                  .eq('driver_id', driverIds.first)
+                  .gte('created_at', today)
             : await supabase
-                .from('orders')
-                .select('status')
-                .inFilter('driver_id', driverIds.toList(growable: false))
-                .gte('created_at', today);
+                  .from('orders')
+                  .select('status')
+                  .inFilter('driver_id', driverIds.toList(growable: false))
+                  .gte('created_at', today);
 
         deliveriesToday = List<Map<String, dynamic>>.from(todayOrders).length;
 
         final completedOrders = driverIds.length == 1
             ? await supabase
-                .from('orders')
-                .select('status')
-                .eq('driver_id', driverIds.first)
+                  .from('orders')
+                  .select('status')
+                  .eq('driver_id', driverIds.first)
             : await supabase
-                .from('orders')
-                .select('status')
-                .inFilter('driver_id', driverIds.toList(growable: false));
+                  .from('orders')
+                  .select('status')
+                  .inFilter('driver_id', driverIds.toList(growable: false));
 
-        totalCompleted = List<Map<String, dynamic>>.from(completedOrders)
-            .where((row) {
-              final status = (row['status']?.toString().trim().toLowerCase() ?? '')
-                  .replaceAll(' ', '_');
-              return status == 'delivered' || status == 'completed';
-            })
-            .length;
+        totalCompleted = List<Map<String, dynamic>>.from(completedOrders).where(
+          (row) {
+            final status =
+                (row['status']?.toString().trim().toLowerCase() ?? '')
+                    .replaceAll(' ', '_');
+            return status == 'delivered' || status == 'completed';
+          },
+        ).length;
       } catch (error) {
         debugPrint('Failed to load driver profile stats: $error');
       }
@@ -142,6 +252,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
       name: name,
       email: email,
       employeeId: employeeId.isEmpty ? 'Not available' : employeeId,
+      avatarUrl: avatarUrl,
       deliveriesToday: deliveriesToday,
       totalCompleted: totalCompleted,
     );
@@ -179,13 +290,16 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
         child: FutureBuilder<_DriverProfileData>(
           future: _profileFuture,
           builder: (context, snapshot) {
-            final profile = snapshot.data ?? const _DriverProfileData(
-              name: 'Driver',
-              email: '',
-              employeeId: 'Not available',
-              deliveriesToday: 0,
-              totalCompleted: 0,
-            );
+            final profile =
+                snapshot.data ??
+                const _DriverProfileData(
+                  name: 'Driver',
+                  email: '',
+                  employeeId: 'Not available',
+                  avatarUrl: '',
+                  deliveriesToday: 0,
+                  totalCompleted: 0,
+                );
 
             return Column(
               children: [
@@ -193,7 +307,13 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
-                      _ProfileHeader(name: profile.name, email: profile.email),
+                      _ProfileHeader(
+                        name: profile.name,
+                        email: profile.email,
+                        avatarUrl: profile.avatarUrl,
+                        isUploadingPhoto: _isUploadingPhoto,
+                        onChangePhoto: _changeProfilePhoto,
+                      ),
                       const SizedBox(height: 16),
                       const _DriverAvailabilityCard(),
                       const SizedBox(height: 16),
@@ -281,10 +401,19 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.name, required this.email});
+  const _ProfileHeader({
+    required this.name,
+    required this.email,
+    required this.avatarUrl,
+    required this.isUploadingPhoto,
+    required this.onChangePhoto,
+  });
 
   final String name;
   final String email;
+  final String avatarUrl;
+  final bool isUploadingPhoto;
+  final VoidCallback onChangePhoto;
 
   @override
   Widget build(BuildContext context) {
@@ -303,16 +432,31 @@ class _ProfileHeader extends StatelessWidget {
       ),
       child: Column(
         children: [
-          const CircleAvatar(
-            radius: 34,
-            backgroundColor: Color(0xFFEFF6FF),
-            child: Icon(
-              Icons.local_shipping_rounded,
-              size: 34,
-              color: Color(0xFF2563EB),
+          CircleAvatar(
+            radius: 40,
+            backgroundColor: const Color(0xFFEFF6FF),
+            backgroundImage: avatarUrl.isEmpty ? null : NetworkImage(avatarUrl),
+            child: avatarUrl.isEmpty
+                ? const Icon(
+                    Icons.local_shipping_rounded,
+                    size: 34,
+                    color: Color(0xFF2563EB),
+                  )
+                : null,
+          ),
+          TextButton.icon(
+            onPressed: isUploadingPhoto ? null : onChangePhoto,
+            icon: isUploadingPhoto
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.add_a_photo_outlined, size: 18),
+            label: Text(
+              isUploadingPhoto ? 'Uploading photo...' : 'Change photo',
             ),
           ),
-          SizedBox(height: 14),
           Text(
             name,
             style: const TextStyle(
@@ -367,10 +511,7 @@ class _QuickStatsCard extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: _StatBox(
-              value: '$totalCompleted',
-              label: 'Total Completed',
-            ),
+            child: _StatBox(value: '$totalCompleted', label: 'Total Completed'),
           ),
         ],
       ),
@@ -711,6 +852,7 @@ class _DriverProfileData {
     required this.name,
     required this.email,
     required this.employeeId,
+    required this.avatarUrl,
     required this.deliveriesToday,
     required this.totalCompleted,
   });
@@ -718,6 +860,7 @@ class _DriverProfileData {
   final String name;
   final String email;
   final String employeeId;
+  final String avatarUrl;
   final int deliveriesToday;
   final int totalCompleted;
 }

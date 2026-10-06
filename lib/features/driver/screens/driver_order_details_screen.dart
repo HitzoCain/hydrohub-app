@@ -56,24 +56,30 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   late String _currentStatus;
   Map<String, dynamic>? _order;
 
-  final TextEditingController _returnedController =
-      TextEditingController(text: '0');
-  final TextEditingController _damagedController =
-      TextEditingController(text: '0');
-  final TextEditingController _missingController =
-      TextEditingController(text: '0');
+  final TextEditingController _returnedController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController _damagedController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController _missingController = TextEditingController(
+    text: '0',
+  );
 
   // Previous borrowed-container return (separate from the current order exchange).
   bool _returnPreviousBorrowed = false;
   bool _isLoadingBorrowings = false;
   List<Map<String, dynamic>> _activeBorrowings = [];
 
-  final TextEditingController _borrowReturnController =
-      TextEditingController(text: '0');
-  final TextEditingController _borrowDamagedController =
-      TextEditingController(text: '0');
-  final TextEditingController _borrowMissingController =
-      TextEditingController(text: '0');
+  final TextEditingController _borrowReturnController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController _borrowDamagedController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController _borrowMissingController = TextEditingController(
+    text: '0',
+  );
 
   @override
   void initState() {
@@ -132,12 +138,14 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   }
 
   List<double?> _extractCustomerCoordinates(Map<String, dynamic> source) {
-    final lat = _toDouble(source['customer_lat']) ??
+    final lat =
+        _toDouble(source['customer_lat']) ??
         _toDouble(source['latitude']) ??
         _toDouble(source['lat']) ??
         _toDouble(source['address_lat']) ??
         _toDouble(source['address_latitude']);
-    final lng = _toDouble(source['customer_lng']) ??
+    final lng =
+        _toDouble(source['customer_lng']) ??
         _toDouble(source['longitude']) ??
         _toDouble(source['lng']) ??
         _toDouble(source['address_lng']) ??
@@ -225,25 +233,32 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
       // Compatibility for older orders. Never infer an exchange return
       // for a Borrow Container order.
-      final totalGallons =
-          _toInt(orderData['gallons'], fallback: widget.totalGallons);
+      final totalGallons = _toInt(
+        orderData['gallons'],
+        fallback: widget.totalGallons,
+      );
 
-      final deliveryType =
-          _textOf(orderData['delivery_type'], fallback: '').toLowerCase();
-      final borrowContainers =
-          _toInt(orderData['borrow_containers'], fallback: 0);
+      final deliveryType = _textOf(
+        orderData['delivery_type'],
+        fallback: '',
+      ).toLowerCase();
+      final borrowContainers = _toInt(
+        orderData['borrow_containers'],
+        fallback: 0,
+      );
 
-      final isBorrowRecord = deliveryType == 'borrow_containers' ||
+      final isBorrowRecord =
+          deliveryType == 'borrow_containers' ||
           borrowContainers > 0 ||
           _textOf(orderData['borrow_status'], fallback: 'none').toLowerCase() !=
               'none';
 
       final hasExchangeCount =
           orderData.containsKey('exchange_containers') &&
-              orderData['exchange_containers'] != null;
+          orderData['exchange_containers'] != null;
       final hasNewContainerCount =
           orderData.containsKey('new_containers') &&
-              orderData['new_containers'] != null;
+          orderData['new_containers'] != null;
 
       if (!isBorrowRecord &&
           !hasExchangeCount &&
@@ -278,9 +293,11 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
             if (addressResponse != null) {
               final addressData = Map<String, dynamic>.from(addressResponse);
-              final addrLat = _toDouble(addressData['latitude']) ??
+              final addrLat =
+                  _toDouble(addressData['latitude']) ??
                   _toDouble(addressData['lat']);
-              final addrLng = _toDouble(addressData['longitude']) ??
+              final addrLng =
+                  _toDouble(addressData['longitude']) ??
                   _toDouble(addressData['lng']);
 
               if (addrLat != null &&
@@ -374,10 +391,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   }
 
   Future<void> _loadActiveBorrowings() async {
-    final customerId = _textOf(
-      _order?['customer_id'],
-      fallback: '',
-    );
+    final customerId = _textOf(_order?['customer_id'], fallback: '');
 
     if (customerId.isEmpty) {
       if (mounted) {
@@ -402,43 +416,21 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
           .from('container_borrowings')
           .select()
           .eq('customer_id', customerId)
-          .inFilter(
-            'status',
-            [
-              'approved',
-              'borrowed',
-              'partially_returned',
-            ],
-          )
+          .inFilter('status', ['approved', 'borrowed', 'partially_returned'])
           .neq('order_id', _rawOrderId)
           .order('borrowed_at', ascending: true);
 
       final rows = List<Map<String, dynamic>>.from(
-        (response as List).map(
-          (row) => Map<String, dynamic>.from(row as Map),
-        ),
+        (response as List).map((row) => Map<String, dynamic>.from(row as Map)),
       );
 
       final activeRows = rows.where((row) {
-        final quantity = _toInt(
-          row['quantity'],
-          fallback: 0,
-        );
-        final returned = _toInt(
-          row['returned_quantity'],
-          fallback: 0,
-        );
-        final damaged = _toInt(
-          row['damaged_quantity'],
-          fallback: 0,
-        );
-        final missing = _toInt(
-          row['missing_quantity'],
-          fallback: 0,
-        );
+        final quantity = _toInt(row['quantity'], fallback: 0);
+        final returned = _toInt(row['returned_quantity'], fallback: 0);
+        final damaged = _toInt(row['damaged_quantity'], fallback: 0);
+        final missing = _toInt(row['missing_quantity'], fallback: 0);
 
-        final outstanding =
-            quantity - returned - damaged - missing;
+        final outstanding = quantity - returned - damaged - missing;
 
         return outstanding > 0;
       }).toList();
@@ -466,22 +458,10 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   }
 
   int _borrowingOutstanding(Map<String, dynamic> borrowing) {
-    final quantity = _toInt(
-      borrowing['quantity'],
-      fallback: 0,
-    );
-    final returned = _toInt(
-      borrowing['returned_quantity'],
-      fallback: 0,
-    );
-    final damaged = _toInt(
-      borrowing['damaged_quantity'],
-      fallback: 0,
-    );
-    final missing = _toInt(
-      borrowing['missing_quantity'],
-      fallback: 0,
-    );
+    final quantity = _toInt(borrowing['quantity'], fallback: 0);
+    final returned = _toInt(borrowing['returned_quantity'], fallback: 0);
+    final damaged = _toInt(borrowing['damaged_quantity'], fallback: 0);
+    final missing = _toInt(borrowing['missing_quantity'], fallback: 0);
 
     return (quantity - returned - damaged - missing).clamp(0, quantity).toInt();
   }
@@ -493,19 +473,14 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     );
   }
 
-  int get _borrowReturnQuantity =>
-      _controllerValue(_borrowReturnController);
+  int get _borrowReturnQuantity => _controllerValue(_borrowReturnController);
 
-  int get _borrowDamagedQuantity =>
-      _controllerValue(_borrowDamagedController);
+  int get _borrowDamagedQuantity => _controllerValue(_borrowDamagedController);
 
-  int get _borrowMissingQuantity =>
-      _controllerValue(_borrowMissingController);
+  int get _borrowMissingQuantity => _controllerValue(_borrowMissingController);
 
   int get _borrowAccountedQuantity =>
-      _borrowReturnQuantity +
-      _borrowDamagedQuantity +
-      _borrowMissingQuantity;
+      _borrowReturnQuantity + _borrowDamagedQuantity + _borrowMissingQuantity;
 
   Widget _buildPreviousBorrowedReturnCard() {
     final outstanding = _totalOutstandingBorrowed;
@@ -571,8 +546,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
             _isLoadingBorrowings
                 ? 'Checking the customer\'s previous borrowed-container records...'
                 : hasOutstanding
-                    ? 'The customer has $outstanding outstanding borrowed container(s) from previous transactions. These can be returned during this delivery even though they are not part of the current order.'
-                    : 'No outstanding borrowed containers were found for this customer.',
+                ? 'The customer has $outstanding outstanding borrowed container(s) from previous transactions. These can be returned during this delivery even though they are not part of the current order.'
+                : 'No outstanding borrowed containers were found for this customer.',
             style: const TextStyle(
               fontSize: 12,
               height: 1.45,
@@ -599,9 +574,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                 decoration: BoxDecoration(
                   color: const Color(0xFFF8FAFC),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: const Color(0xFFE2E8F0),
-                  ),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -615,48 +588,46 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    ..._activeBorrowings.map(
-                      (borrowing) {
-                        final quantity = _borrowingOutstanding(borrowing);
-                        if (quantity <= 0) {
-                          return const SizedBox.shrink();
-                        }
+                    ..._activeBorrowings.map((borrowing) {
+                      final quantity = _borrowingOutstanding(borrowing);
+                      if (quantity <= 0) {
+                        return const SizedBox.shrink();
+                      }
 
-                        final capacity = _resolvedCapacity(borrowing);
-                        final borrowedAt = _textOf(
-                          borrowing['borrowed_at'],
-                          fallback: '',
-                        );
+                      final capacity = _resolvedCapacity(borrowing);
+                      final borrowedAt = _textOf(
+                        borrowing['borrowed_at'],
+                        fallback: '',
+                      );
 
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 7),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(
-                                Icons.circle,
-                                size: 7,
-                                color: Color(0xFFD97706),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  borrowedAt.isEmpty
-                                      ? '$capacity • $quantity container(s) outstanding'
-                                      : '$capacity • $quantity container(s) outstanding\nBorrowed: $borrowedAt',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    height: 1.4,
-                                    color: Color(0xFF475569),
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 7),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.circle,
+                              size: 7,
+                              color: Color(0xFFD97706),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                borrowedAt.isEmpty
+                                    ? '$capacity • $quantity container(s) outstanding'
+                                    : '$capacity • $quantity container(s) outstanding\nBorrowed: $borrowedAt',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  height: 1.4,
+                                  color: Color(0xFF475569),
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
                   ],
                 ),
               ),
@@ -733,15 +704,15 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                   color: isComplete
                       ? const Color(0xFFF0FDF4)
                       : isOver
-                          ? const Color(0xFFFEF2F2)
-                          : const Color(0xFFFFF7ED),
+                      ? const Color(0xFFFEF2F2)
+                      : const Color(0xFFFFF7ED),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color: isComplete
                         ? const Color(0xFFBBF7D0)
                         : isOver
-                            ? const Color(0xFFFECACA)
-                            : const Color(0xFFFED7AA),
+                        ? const Color(0xFFFECACA)
+                        : const Color(0xFFFED7AA),
                   ),
                 ),
                 child: Row(
@@ -750,13 +721,13 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                       isComplete
                           ? Icons.check_circle_outline
                           : isOver
-                              ? Icons.error_outline
-                              : Icons.info_outline,
+                          ? Icons.error_outline
+                          : Icons.info_outline,
                       color: isComplete
                           ? _successGreen
                           : isOver
-                              ? const Color(0xFFDC2626)
-                              : const Color(0xFFD97706),
+                          ? const Color(0xFFDC2626)
+                          : const Color(0xFFD97706),
                       size: 20,
                     ),
                     const SizedBox(width: 8),
@@ -765,8 +736,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                         isComplete
                             ? 'All entered previous borrowed containers are accounted for.'
                             : isOver
-                                ? 'The quantities exceed the customer\'s outstanding borrowed containers.'
-                                : '$remaining container(s) still need to be accounted for. Partial returns are allowed.',
+                            ? 'The quantities exceed the customer\'s outstanding borrowed containers.'
+                            : '$remaining container(s) still need to be accounted for. Partial returns are allowed.',
                         style: TextStyle(
                           fontSize: 12,
                           height: 1.4,
@@ -774,8 +745,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                           color: isComplete
                               ? const Color(0xFF166534)
                               : isOver
-                                  ? const Color(0xFF991B1B)
-                                  : const Color(0xFF9A3412),
+                              ? const Color(0xFF991B1B)
+                              : const Color(0xFF9A3412),
                         ),
                       ),
                     ),
@@ -813,21 +784,12 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
         .from('container_borrowings')
         .select()
         .eq('customer_id', customerId)
-        .inFilter(
-          'status',
-          [
-            'approved',
-            'borrowed',
-            'partially_returned',
-          ],
-        )
+        .inFilter('status', ['approved', 'borrowed', 'partially_returned'])
         .neq('order_id', currentOrderId)
         .order('borrowed_at', ascending: true);
 
     final borrowings = List<Map<String, dynamic>>.from(
-      (response as List).map(
-        (row) => Map<String, dynamic>.from(row as Map),
-      ),
+      (response as List).map((row) => Map<String, dynamic>.from(row as Map)),
     );
 
     int latestOutstanding = 0;
@@ -894,29 +856,16 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
         continue;
       }
 
-      final oldReturned = _toInt(
-        borrowing['returned_quantity'],
-        fallback: 0,
-      );
-      final oldDamaged = _toInt(
-        borrowing['damaged_quantity'],
-        fallback: 0,
-      );
-      final oldMissing = _toInt(
-        borrowing['missing_quantity'],
-        fallback: 0,
-      );
-      final quantity = _toInt(
-        borrowing['quantity'],
-        fallback: 0,
-      );
+      final oldReturned = _toInt(borrowing['returned_quantity'], fallback: 0);
+      final oldDamaged = _toInt(borrowing['damaged_quantity'], fallback: 0);
+      final oldMissing = _toInt(borrowing['missing_quantity'], fallback: 0);
+      final quantity = _toInt(borrowing['quantity'], fallback: 0);
 
       final newReturned = oldReturned + allocateReturned;
       final newDamaged = oldDamaged + allocateDamaged;
       final newMissing = oldMissing + allocateMissing;
 
-      final newOutstanding =
-          quantity - newReturned - newDamaged - newMissing;
+      final newOutstanding = quantity - newReturned - newDamaged - newMissing;
 
       if (newReturned + newDamaged + newMissing > quantity) {
         throw Exception(
@@ -942,8 +891,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
         'order_id': currentOrderId,
         'driver_id': driverId,
         'customer_id': customerId,
-        'customer_name': borrowing['customer_name'] ??
-            _resolvedCustomerName(),
+        'customer_name': borrowing['customer_name'] ?? _resolvedCustomerName(),
         'capacity': capacity,
         'expected_quantity': allocatedTotal,
         'returned_quantity': allocateReturned,
@@ -977,9 +925,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
           .eq('id', borrowingId);
     }
 
-    if (remainingReturned > 0 ||
-        remainingDamaged > 0 ||
-        remainingMissing > 0) {
+    if (remainingReturned > 0 || remainingDamaged > 0 || remainingMissing > 0) {
       throw Exception(
         'The borrowed-container return could not be completely recorded. Please refresh and try again.',
       );
@@ -987,10 +933,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   }
 
   String _resolvedCustomerName() {
-    return _textOf(
-      _order?['customer_name'],
-      fallback: widget.customerName,
-    );
+    return _textOf(_order?['customer_name'], fallback: widget.customerName);
   }
 
   String _resolvedContactNumber() {
@@ -999,6 +942,26 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
       return fromOrder;
     }
     return _textOf(widget.contactNumber, fallback: 'Not provided');
+  }
+
+  String _resolvedPaymentMethod() {
+    final method = _textOf(
+      _order?['payment_method'],
+      fallback: '',
+    ).trim().toLowerCase();
+
+    switch (method) {
+      case 'gcash':
+        return 'GCash';
+      case 'cash':
+      case 'cod':
+      case 'cash on delivery':
+        return 'Cash on Delivery';
+      case '':
+        return 'Not specified';
+      default:
+        return method;
+    }
   }
 
   String _resolvedAddress() {
@@ -1016,12 +979,17 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   String _resolvedDeliveryType([Map<String, dynamic>? source]) {
     final order = source ?? _order ?? const <String, dynamic>{};
 
-    final rawType =
-        _textOf(order['delivery_type'], fallback: '').trim().toLowerCase();
+    final rawType = _textOf(
+      order['delivery_type'],
+      fallback: '',
+    ).trim().toLowerCase();
 
     if (rawType == 'borrow_containers' ||
         _toInt(order['borrow_containers'], fallback: 0) > 0 ||
-        _textOf(order['borrow_status'], fallback: 'none').trim().toLowerCase() !=
+        _textOf(
+              order['borrow_status'],
+              fallback: 'none',
+            ).trim().toLowerCase() !=
             'none') {
       return 'borrow_containers';
     }
@@ -1101,6 +1069,16 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
       default:
         return 'New Container';
     }
+  }
+
+  String _resolvedProductName() {
+    final value = _textOf(_order?['product_name'], fallback: '');
+    return value.isEmpty ? 'Water' : value;
+  }
+
+  String _resolvedProductCapacity() {
+    final value = _textOf(_order?['capacity'], fallback: '');
+    return value.isEmpty ? 'Size unavailable' : value;
   }
 
   String _resolvedTotalPayment() {
@@ -1186,9 +1164,9 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   }
 
   int get _expectedReturnQuantity => _expectedExchangeQuantity(
-        _order ?? const <String, dynamic>{},
-        total: _resolvedTotalGallons(),
-      );
+    _order ?? const <String, dynamic>{},
+    total: _resolvedTotalGallons(),
+  );
 
   int get _returnedQuantity => _controllerValue(_returnedController);
   int get _damagedQuantity => _controllerValue(_damagedController);
@@ -1243,6 +1221,11 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                       value: _statusLabel(_currentStatus),
                       valueColor: _statusColor(_currentStatus),
                     ),
+                    const SizedBox(height: 8),
+                    _InfoRow(
+                      label: 'Payment Method',
+                      value: _resolvedPaymentMethod(),
+                    ),
                   ],
                 ),
               ),
@@ -1270,7 +1253,10 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                       value: _resolvedContactNumber(),
                     ),
                     const SizedBox(height: 8),
-                    _InfoRow(label: 'Delivery Address', value: _resolvedAddress()),
+                    _InfoRow(
+                      label: 'Delivery Address',
+                      value: _resolvedAddress(),
+                    ),
                   ],
                 ),
               ),
@@ -1288,9 +1274,13 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    _InfoRow(label: 'Product', value: _resolvedProductName()),
+                    const SizedBox(height: 8),
+                    _InfoRow(label: 'Size', value: _resolvedProductCapacity()),
+                    const SizedBox(height: 8),
                     _InfoRow(
-                      label: 'Total Gallons',
-                      value: '${_resolvedTotalGallons()} Gallons',
+                      label: 'Quantity',
+                      value: '${_resolvedTotalGallons()} Containers',
                     ),
                     const SizedBox(height: 8),
                     _InfoRow(
@@ -1693,12 +1683,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
             child: Row(
               children: [
                 Icon(
-                  isComplete
-                      ? Icons.check_circle_outline
-                      : Icons.info_outline,
-                  color: isComplete
-                      ? _successGreen
-                      : const Color(0xFFD97706),
+                  isComplete ? Icons.check_circle_outline : Icons.info_outline,
+                  color: isComplete ? _successGreen : const Color(0xFFD97706),
                   size: 20,
                 ),
                 const SizedBox(width: 8),
@@ -1707,8 +1693,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                     isComplete
                         ? 'All containers are accounted for. You can mark the delivery as delivered.'
                         : isOver
-                            ? 'The quantities exceed the expected return. Please correct the values.'
-                            : '$remaining container(s) still need to be accounted for.',
+                        ? 'The quantities exceed the expected return. Please correct the values.'
+                        : '$remaining container(s) still need to be accounted for.',
                     style: TextStyle(
                       fontSize: 12,
                       height: 1.4,
@@ -1770,22 +1756,15 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(
-                  color: Color(0xFFCBD5E1),
-                ),
+                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(
-                  color: Color(0xFFCBD5E1),
-                ),
+                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(
-                  color: _primaryBlue,
-                  width: 1.5,
-                ),
+                borderSide: const BorderSide(color: _primaryBlue, width: 1.5),
               ),
               filled: true,
               fillColor: const Color(0xFFF8FAFC),
@@ -1930,10 +1909,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
       setState(() {
         _currentStatus = 'in_progress';
-        _order = {
-          ...?_order,
-          'status': 'in_progress',
-        };
+        _order = {...?_order, 'status': 'in_progress'};
         _isLoading = false;
       });
 
@@ -1962,10 +1938,9 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
   }
 
   String _resolvedCapacity(Map<String, dynamic> order) {
-    final rawCapacity =
-        order['capacity']?.toString().trim().isNotEmpty == true
-            ? order['capacity'].toString()
-            : (order['product_name']?.toString() ?? '5 gallons');
+    final rawCapacity = order['capacity']?.toString().trim().isNotEmpty == true
+        ? order['capacity'].toString()
+        : (order['product_name']?.toString() ?? '5 gallons');
 
     final capacityText = rawCapacity.trim().toLowerCase();
 
@@ -2048,9 +2023,7 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
 
         final existingReturns = await supabase
             .from('container_returns')
-            .select(
-              'id, returned_quantity, damaged_quantity, missing_quantity',
-            )
+            .select('id, returned_quantity, damaged_quantity, missing_quantity')
             .eq('order_id', orderId);
 
         int alreadyAccounted = 0;
@@ -2145,10 +2118,13 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
         }
 
         // Synchronize the order borrowing status.
-        await supabase.from('orders').update({
-          'borrow_containers': borrowQuantity,
-          'borrow_status': 'borrowed',
-        }).eq('id', orderId);
+        await supabase
+            .from('orders')
+            .update({
+              'borrow_containers': borrowQuantity,
+              'borrow_status': 'borrowed',
+            })
+            .eq('id', orderId);
 
         // Synchronize delivery_type when a delivery record already exists.
         try {
@@ -2213,8 +2189,8 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
       final message = isExchange
           ? 'Delivery completed. Empty containers were recorded as returned, damaged, or missing.$previousBorrowReturnMessage'
           : isBorrow
-              ? 'Delivery completed. ${_toInt(freshOrder['borrow_containers'], fallback: 0)} borrowed container(s) were recorded.$previousBorrowReturnMessage'
-              : 'Delivery completed successfully.$previousBorrowReturnMessage';
+          ? 'Delivery completed. ${_toInt(freshOrder['borrow_containers'], fallback: 0)} borrowed container(s) were recorded.$previousBorrowReturnMessage'
+          : 'Delivery completed successfully.$previousBorrowReturnMessage';
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

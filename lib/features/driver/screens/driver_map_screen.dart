@@ -26,12 +26,16 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
   static const LatLng _fallbackDriverLocation = LatLng(14.5995, 120.9842);
 
   Future<_DriverMapData> _driverMapFuture = Future<_DriverMapData>.value(
-    const _DriverMapData(deliveries: <DeliveryLocationData>[], driverLocation: _fallbackDriverLocation),
+    const _DriverMapData(
+      deliveries: <DeliveryLocationData>[],
+      driverLocation: _fallbackDriverLocation,
+    ),
   );
 
   LatLng? _selectedCustomerLocation;
   LatLng _driverLocation = _fallbackDriverLocation;
   StreamSubscription<Position>? _positionSubscription;
+  bool _isCustomerChooserExpanded = true;
 
   @override
   void initState() {
@@ -61,17 +65,18 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
     }
 
     await _positionSubscription?.cancel();
-    _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 5,
-      ),
-    ).listen((position) {
-      if (!mounted) return;
-      setState(() {
-        _driverLocation = LatLng(position.latitude, position.longitude);
-      });
-    });
+    _positionSubscription =
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 5,
+          ),
+        ).listen((position) {
+          if (!mounted) return;
+          setState(() {
+            _driverLocation = LatLng(position.latitude, position.longitude);
+          });
+        });
   }
 
   Future<void> _refreshDriverLocation() async {
@@ -154,23 +159,28 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
   ) async {
     final response = driverIds.length == 1
         ? await Supabase.instance.client
-            .from('orders')
-            .select()
-            .eq('driver_id', driverIds.first)
-            .inFilter('status', ['assigned', 'in_progress', 'on_the_way'])
-            .order('created_at', ascending: false)
+              .from('orders')
+              .select()
+              .eq('driver_id', driverIds.first)
+              .inFilter('status', ['assigned', 'in_progress', 'on_the_way'])
+              .order('created_at', ascending: false)
         : await Supabase.instance.client
-            .from('orders')
-            .select()
-            .inFilter('driver_id', driverIds)
-            .inFilter('status', ['assigned', 'in_progress', 'on_the_way'])
-            .order('created_at', ascending: false);
+              .from('orders')
+              .select()
+              .inFilter('driver_id', driverIds)
+              .inFilter('status', ['assigned', 'in_progress', 'on_the_way'])
+              .order('created_at', ascending: false);
 
     final orders = response.whereType<Map<String, dynamic>>().toList();
+    final customerAvatarUrls = await _fetchCustomerAvatarUrls(orders);
     final deliveries = <DeliveryLocationData>[];
 
     for (final order in orders) {
-      final delivery = await _mapOrderToDelivery(order);
+      final customerId = order['customer_id']?.toString().trim() ?? '';
+      final delivery = await _mapOrderToDelivery(
+        order,
+        avatarUrl: customerAvatarUrls[customerId] ?? '',
+      );
       if (delivery != null) {
         deliveries.add(delivery);
       }
@@ -179,9 +189,40 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
     return deliveries;
   }
 
-  Future<DeliveryLocationData?> _mapOrderToDelivery(
-    Map<String, dynamic> order,
+  Future<Map<String, String>> _fetchCustomerAvatarUrls(
+    List<Map<String, dynamic>> orders,
   ) async {
+    final customerIds = orders
+        .map((order) => order['customer_id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    if (customerIds.isEmpty) return {};
+
+    try {
+      final profiles = await Supabase.instance.client
+          .from('customer_profiles')
+          .select('user_id, avatar_url')
+          .inFilter('user_id', customerIds);
+      final avatarUrls = <String, String>{};
+      for (final profile in profiles.whereType<Map<String, dynamic>>()) {
+        final userId = profile['user_id']?.toString().trim() ?? '';
+        final avatarUrl = profile['avatar_url']?.toString().trim() ?? '';
+        if (userId.isNotEmpty && avatarUrl.isNotEmpty) {
+          avatarUrls[userId] = avatarUrl;
+        }
+      }
+      return avatarUrls;
+    } catch (error) {
+      debugPrint('Failed to load map customer photos: $error');
+      return {};
+    }
+  }
+
+  Future<DeliveryLocationData?> _mapOrderToDelivery(
+    Map<String, dynamic> order, {
+    required String avatarUrl,
+  }) async {
     final coordinates = await _resolveCustomerLocation(order);
     if (coordinates == null) {
       return null;
@@ -192,7 +233,17 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
     return DeliveryLocationData(
       customerName: _textOf(order['customer_name'], fallback: 'Customer'),
       orderId: _orderLabel(order['id']),
+      avatarUrl: avatarUrl,
       address: _resolvedAddress(order),
+      productName: _textOf(order['product_name'], fallback: 'Water'),
+      size: _textOf(
+        order['capacity'] ?? order['size'],
+        fallback: 'Size unavailable',
+      ),
+      containers: _textOf(
+        order['gallons'] ?? order['container_count'],
+        fallback: '0',
+      ),
       status: status,
       location: coordinates,
       rawOrder: Map<String, dynamic>.from(order),
@@ -200,12 +251,14 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
   }
 
   Future<LatLng?> _resolveCustomerLocation(Map<String, dynamic> order) async {
-    final lat = _toDouble(order['customer_lat']) ??
+    final lat =
+        _toDouble(order['customer_lat']) ??
         _toDouble(order['latitude']) ??
         _toDouble(order['lat']) ??
         _toDouble(order['address_lat']) ??
         _toDouble(order['address_latitude']);
-    final lng = _toDouble(order['customer_lng']) ??
+    final lng =
+        _toDouble(order['customer_lng']) ??
         _toDouble(order['longitude']) ??
         _toDouble(order['lng']) ??
         _toDouble(order['address_lng']) ??
@@ -226,9 +279,11 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
 
         if (addressResponse != null) {
           final addressData = Map<String, dynamic>.from(addressResponse);
-          final addressLat = _toDouble(addressData['latitude']) ??
+          final addressLat =
+              _toDouble(addressData['latitude']) ??
               _toDouble(addressData['lat']);
-          final addressLng = _toDouble(addressData['longitude']) ??
+          final addressLng =
+              _toDouble(addressData['longitude']) ??
               _toDouble(addressData['lng']);
           if (_isValidLatLng(addressLat, addressLng)) {
             return LatLng(addressLat!, addressLng!);
@@ -280,8 +335,10 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
     final address = _textOf(order['address'], fallback: '');
     if (address.isNotEmpty) return address;
 
-    final lat = _toDouble(order['customer_lat']) ?? _toDouble(order['latitude']);
-    final lng = _toDouble(order['customer_lng']) ?? _toDouble(order['longitude']);
+    final lat =
+        _toDouble(order['customer_lat']) ?? _toDouble(order['latitude']);
+    final lng =
+        _toDouble(order['customer_lng']) ?? _toDouble(order['longitude']);
     if (_isValidLatLng(lat, lng)) {
       return 'Lat: ${lat!.toStringAsFixed(6)}, Lng: ${lng!.toStringAsFixed(6)}';
     }
@@ -331,17 +388,19 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
               );
             }
 
-            final mapData = snapshot.data ??
+            final mapData =
+                snapshot.data ??
                 const _DriverMapData(
                   deliveries: <DeliveryLocationData>[],
                   driverLocation: _fallbackDriverLocation,
                 );
 
             final activeCount = mapData.deliveries.length;
-            final centerLocation = _selectedCustomerLocation ??
-              (mapData.deliveries.isNotEmpty
-                ? mapData.deliveries.first.location
-                : mapData.driverLocation);
+            final centerLocation =
+                _selectedCustomerLocation ??
+                (mapData.deliveries.isNotEmpty
+                    ? mapData.deliveries.first.location
+                    : mapData.driverLocation);
 
             return RefreshIndicator(
               onRefresh: () async => _reloadData(),
@@ -364,7 +423,9 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
                               'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                           userAgentPackageName: 'com.aquaenlavada.app',
                         ),
-                        MarkerLayer(markers: _buildMarkers(mapData, _driverLocation)),
+                        MarkerLayer(
+                          markers: _buildMarkers(mapData, _driverLocation),
+                        ),
                       ],
                     ),
                   ),
@@ -380,6 +441,13 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
                     bottom: 16,
                     child: _CustomerChooserSheet(
                       deliveries: mapData.deliveries,
+                      isExpanded: _isCustomerChooserExpanded,
+                      onToggle: () {
+                        setState(() {
+                          _isCustomerChooserExpanded =
+                              !_isCustomerChooserExpanded;
+                        });
+                      },
                       onPick: (delivery) {
                         setState(() {
                           _selectedCustomerLocation = delivery.location;
@@ -464,17 +532,53 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
     final customerMarkers = mapData.deliveries.map((delivery) {
       return Marker(
         point: delivery.location,
-        width: 128,
-        height: 66,
+        width: 152,
+        height: 76,
+        alignment: Alignment.bottomCenter,
         child: GestureDetector(
-          onTap: () => _showDeliverySheet(delivery),
-          child: DeliveryMarker(
-            label: delivery.orderId,
-            icon: Icons.location_on,
-            iconColor: Colors.red,
-            isSelected: _selectedCustomerLocation != null &&
-                _selectedCustomerLocation!.latitude == delivery.location.latitude &&
-                _selectedCustomerLocation!.longitude == delivery.location.longitude,
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            setState(() {
+              _selectedCustomerLocation = delivery.location;
+            });
+            _showDeliverySheet(delivery);
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                constraints: const BoxConstraints(maxWidth: 132),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x260F172A),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  delivery.customerName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF334155),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 2),
+              const Icon(
+                Icons.location_on_rounded,
+                size: 42,
+                color: Color(0xFFDC2626),
+              ),
+            ],
           ),
         ),
       );
@@ -498,100 +602,233 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
   void _showDeliverySheet(DeliveryLocationData delivery) {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
         final statusTheme = _statusTheme(delivery.status);
 
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
+        return Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFEFF6FF),
-                      borderRadius: BorderRadius.circular(12),
+                      color: const Color(0xFFCBD5E1),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.location_on, color: _primaryBlue),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      delivery.customerName,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusTheme.background,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      delivery.status.label,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: statusTheme.foreground,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              _InfoRow(label: 'Order ID', value: delivery.orderId),
-              const SizedBox(height: 8),
-              _InfoRow(label: 'Address', value: delivery.address),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      this.context,
-                      MaterialPageRoute<void>(
-                        builder: (context) => DriverOrderDetailsScreen(
-                          customerName: delivery.customerName,
-                          orderId: delivery.orderId,
-                          address: delivery.address,
-                          status: delivery.status.value,
-                          initialOrder: delivery.rawOrder,
-                        ),
-                      ),
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _primaryBlue,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: const Text(
-                    'View Order Details',
-                    style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    _CustomerAvatar(
+                      imageUrl: delivery.avatarUrl,
+                      size: 58,
+                      borderColor: const Color(0xFFE2E8F0),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            delivery.customerName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            delivery.orderId,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusTheme.background,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        delivery.status.label,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: statusTheme.foreground,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F7FC),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.inventory_2_outlined,
+                          color: _primaryBlue,
+                          size: 21,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              delivery.productName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              delivery.size,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            delivery.containers,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: _primaryBlue,
+                            ),
+                          ),
+                          const Text(
+                            'Containers',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'DELIVERY ADDRESS',
+                  style: TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 0.4,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.location_on_rounded,
+                      color: _primaryBlue,
+                      size: 19,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        delivery.address,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          height: 1.35,
+                          color: Color(0xFF334155),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        this.context,
+                        MaterialPageRoute<void>(
+                          builder: (context) => DriverOrderDetailsScreen(
+                            customerName: delivery.customerName,
+                            orderId: delivery.orderId,
+                            address: delivery.address,
+                            status: delivery.status.value,
+                            initialOrder: delivery.rawOrder,
+                          ),
+                        ),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _primaryBlue,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: const Text(
+                      'View Order Details',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -605,12 +842,14 @@ class DeliveryMarker extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.iconColor,
+    this.avatarUrl,
     this.isSelected = false,
   });
 
   final String label;
   final IconData icon;
   final Color iconColor;
+  final String? avatarUrl;
   final bool isSelected;
 
   @override
@@ -621,10 +860,10 @@ class DeliveryMarker extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: isSelected ? const Color(0xFF2563EB) : Colors.white,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: isSelected ? const Color(0xFF2563EB) : Colors.transparent,
+              color: isSelected ? const Color(0xFF1D4ED8) : Colors.transparent,
               width: 1,
             ),
             boxShadow: const [
@@ -637,15 +876,73 @@ class DeliveryMarker extends StatelessWidget {
           ),
           child: Text(
             label,
-            style: const TextStyle(
-              color: Color(0xFF334155),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: isSelected ? Colors.white : const Color(0xFF334155),
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
           ),
         ),
-        Icon(icon, size: 34, color: iconColor),
+        const SizedBox(height: 4),
+        if (avatarUrl != null)
+          _CustomerAvatar(
+            imageUrl: avatarUrl!,
+            size: 48,
+            borderColor: isSelected ? const Color(0xFF1D4ED8) : Colors.white,
+          )
+        else
+          Icon(icon, size: 34, color: iconColor),
       ],
+    );
+  }
+}
+
+class _CustomerAvatar extends StatelessWidget {
+  const _CustomerAvatar({
+    required this.imageUrl,
+    required this.size,
+    this.borderColor = Colors.white,
+  });
+
+  final String imageUrl;
+  final double size;
+  final Color borderColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        shape: BoxShape.circle,
+        border: Border.all(color: borderColor, width: 2.5),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x260F172A),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: imageUrl.isEmpty
+          ? Icon(
+              Icons.person_rounded,
+              size: size * 0.52,
+              color: const Color(0xFF2563EB),
+            )
+          : Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Icon(
+                Icons.person_rounded,
+                size: size * 0.52,
+                color: const Color(0xFF2563EB),
+              ),
+            ),
     );
   }
 }
@@ -703,44 +1000,23 @@ class _TopInfoCard extends StatelessWidget {
 class _CustomerChooserSheet extends StatelessWidget {
   const _CustomerChooserSheet({
     required this.deliveries,
+    required this.isExpanded,
+    required this.onToggle,
     required this.onPick,
   });
 
   final List<DeliveryLocationData> deliveries;
+  final bool isExpanded;
+  final VoidCallback onToggle;
   final ValueChanged<DeliveryLocationData> onPick;
 
   @override
   Widget build(BuildContext context) {
-    if (deliveries.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x14233455),
-              blurRadius: 10,
-              offset: Offset(0, 3),
-            ),
-          ],
-        ),
-        child: const Text(
-          'No assigned customer locations found yet.',
-          style: TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
-    }
-
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
         boxShadow: const [
           BoxShadow(
             color: Color(0x14233455),
@@ -753,137 +1029,137 @@ class _CustomerChooserSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Choose a nearby customer',
-            style: TextStyle(
-              color: Color(0xFF0F172A),
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 118,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemBuilder: (context, index) {
-                final delivery = deliveries[index];
-                return GestureDetector(
-                  onTap: () => onPick(delivery),
-                  child: Container(
-                    width: 190,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FBFF),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                delivery.customerName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF0F172A),
-                                ),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: delivery.status == DeliveryStatus.onTheWay
-                                    ? const Color(0xFFDBEAFE)
-                                    : const Color(0xFFFEF3C7),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                delivery.status.label,
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w700,
-                                  color: delivery.status == DeliveryStatus.onTheWay
-                                      ? const Color(0xFF1D4ED8)
-                                      : const Color(0xFFB45309),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          delivery.address,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFF475569),
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          delivery.orderId,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Color(0xFF2563EB),
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  deliveries.isEmpty
+                      ? 'Customer locations'
+                      : 'Choose a nearby customer',
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
                   ),
-                );
-              },
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemCount: deliveries.length,
-            ),
+                ),
+              ),
+              Text(
+                '${deliveries.length}',
+                style: const TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: isExpanded ? 'Hide customers' : 'Show customers',
+                onPressed: onToggle,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 36,
+                  height: 36,
+                ),
+                padding: EdgeInsets.zero,
+                icon: Icon(
+                  isExpanded
+                      ? Icons.keyboard_arrow_down_rounded
+                      : Icons.keyboard_arrow_up_rounded,
+                  color: const Color(0xFF2563EB),
+                  size: 24,
+                ),
+              ),
+            ],
           ),
+          if (isExpanded && deliveries.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 4, bottom: 4),
+              child: Text(
+                'No assigned customer locations found yet.',
+                style: TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          if (isExpanded && deliveries.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 112,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: deliveries.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final delivery = deliveries[index];
+                  return GestureDetector(
+                    onTap: () => onPick(delivery),
+                    child: Container(
+                      width: 196,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FBFF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              _CustomerAvatar(
+                                imageUrl: delivery.avatarUrl,
+                                size: 34,
+                                borderColor: Colors.white,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  delivery.customerName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            delivery.productName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF334155),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${delivery.size} · ${delivery.containers} containers',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ],
       ),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 64,
-          child: Text(
-            '$label:',
-            style: const TextStyle(
-              color: Color(0xFF64748B),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
-              color: Color(0xFF0F172A),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -892,7 +1168,11 @@ class DeliveryLocationData {
   const DeliveryLocationData({
     required this.customerName,
     required this.orderId,
+    required this.avatarUrl,
     required this.address,
+    required this.productName,
+    required this.size,
+    required this.containers,
     required this.status,
     required this.location,
     required this.rawOrder,
@@ -900,7 +1180,11 @@ class DeliveryLocationData {
 
   final String customerName;
   final String orderId;
+  final String avatarUrl;
   final String address;
+  final String productName;
+  final String size;
+  final String containers;
   final DeliveryStatus status;
   final LatLng location;
   final Map<String, dynamic> rawOrder;

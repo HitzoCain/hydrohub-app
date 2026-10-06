@@ -1,8 +1,8 @@
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
 import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_controller.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/track_order_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -15,14 +15,13 @@ class CustomerHomeScreen extends StatefulWidget {
 
 class _CustomerHomeScreenState extends State<CustomerHomeScreen>
     with WidgetsBindingObserver {
-  static const Color _background = Color(0xFFF1F5F9);
-
   Timer? _greetingTimer;
   Timer? _orderRefreshTimer;
 
   Future<_DashboardOrdersData> _dashboardOrdersFuture = Future.value(
     const _DashboardOrdersData(activeOrders: [], recentOrders: []),
   );
+  Future<String> _customerAvatarFuture = Future<String>.value('');
 
   bool _isRefreshing = false;
 
@@ -40,6 +39,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
 
     // Initial order load
     _reloadDashboardOrders();
+    _customerAvatarFuture = _fetchCustomerAvatar();
 
     // Update greeting every minute
     _greetingTimer = Timer.periodic(const Duration(minutes: 1), (_) {
@@ -111,6 +111,27 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
     // Home tab
     if (CustomerNavController.instance.index == 0) {
       _reloadDashboardOrders(showLoading: false);
+      setState(() {
+        _customerAvatarFuture = _fetchCustomerAvatar();
+      });
+    }
+  }
+
+  Future<String> _fetchCustomerAvatar() async {
+    final supabase = Supabase.instance.client;
+    final user = supabase.auth.currentUser;
+    if (user == null) return '';
+
+    try {
+      final profile = await supabase
+          .from('customer_profiles')
+          .select('avatar_url')
+          .eq('user_id', user.id)
+          .maybeSingle();
+      return profile?['avatar_url']?.toString().trim() ?? '';
+    } catch (error) {
+      debugPrint('Failed to load customer profile photo: $error');
+      return '';
     }
   }
 
@@ -249,7 +270,8 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
 
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -262,121 +284,142 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
           ),
         ),
 
-        backgroundColor: _background,
+        backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
       ),
 
-      body: FutureBuilder<_DashboardOrdersData>(
-        future: _dashboardOrdersFuture,
-
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (snapshot.hasError) {
-            return RefreshIndicator(
-              onRefresh: () async {
-                _reloadDashboardOrders(showLoading: false);
-
-                try {
-                  await _dashboardOrdersFuture;
-                } catch (_) {}
-              },
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  SizedBox(height: 250),
-
-                  Center(
-                    child: Text(
-                      'Failed to load orders',
-                      style: TextStyle(color: Color(0xFF64748B)),
-                    ),
-                  ),
-                ],
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned.fill(
+            child: ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 1.2, sigmaY: 1.2),
+              child: Image.asset(
+                'assets/images/background.jpg',
+                fit: BoxFit.cover,
               ),
-            );
-          }
-
-          final dashboardOrders =
-              snapshot.data ??
-              const _DashboardOrdersData(activeOrders: [], recentOrders: []);
-
-          return RefreshIndicator(
-            onRefresh: () async {
-              _reloadDashboardOrders(showLoading: false);
-
-              try {
-                await _dashboardOrdersFuture;
-              } catch (_) {}
-            },
-
-            child: Stack(
-              children: [
-                ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
-                  ),
-
-                  children: [
-                    const _GreetingSection(),
-
-                    const SizedBox(height: 18),
-
-                    _OrderWaterCard(
-                      onTap: () {
-                        CustomerNavController.instance.goTo(1);
-                      },
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    const _SectionHeader(title: 'Active Orders'),
-
-                    const SizedBox(height: 12),
-
-                    _ActiveOrdersList(
-                      activeOrders: dashboardOrders.activeOrders,
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    _RecentOrdersHeader(
-                      onSeeAllTap: () {
-                        CustomerNavController.instance.goTo(2);
-                      },
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    _RecentOrdersList(
-                      recentOrders: dashboardOrders.recentOrders,
-                    ),
-
-                    const SizedBox(height: 16),
-                  ],
-                ),
-
-                // Small refresh indicator at the top while
-                // background auto-refresh is happening.
-                if (_isRefreshing)
-                  const Positioned(
-                    top: 8,
-                    right: 16,
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-              ],
             ),
-          );
-        },
+          ),
+          const ColoredBox(color: Color(0x22081D35)),
+          FutureBuilder<_DashboardOrdersData>(
+            future: _dashboardOrdersFuture,
+
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (snapshot.hasError) {
+                return Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Failed to load orders',
+                        style: TextStyle(color: Color(0xFF64748B)),
+                      ),
+                      TextButton(
+                        onPressed: () =>
+                            _reloadDashboardOrders(showLoading: false),
+                        child: const Text('Try again'),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              final dashboardOrders =
+                  snapshot.data ??
+                  const _DashboardOrdersData(
+                    activeOrders: [],
+                    recentOrders: [],
+                  );
+
+              return Stack(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      MediaQuery.of(context).padding.top + 20,
+                      16,
+                      0,
+                    ),
+                    child: Column(
+                      children: [
+                        FutureBuilder<String>(
+                          future: _customerAvatarFuture,
+                          builder: (context, avatarSnapshot) {
+                            return _GreetingSection(
+                              avatarUrl: avatarSnapshot.data ?? '',
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        _OrderWaterCard(
+                          onTap: () {
+                            CustomerNavController.instance.goTo(1);
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        _SectionHeader(
+                          title: 'Active Orders',
+                          onSeeAllTap: () {
+                            CustomerNavController.instance.goTo(2);
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        _ActiveOrdersList(
+                          activeOrders: dashboardOrders.activeOrders,
+                        ),
+                        const SizedBox(height: 14),
+                        _RecentOrdersHeader(
+                          onSeeAllTap: () {
+                            CustomerNavController.instance.goTo(2);
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: FutureBuilder<String>(
+                            future: _customerAvatarFuture,
+                            builder: (context, avatarSnapshot) {
+                              return RefreshIndicator(
+                                onRefresh: () async {
+                                  _reloadDashboardOrders(showLoading: false);
+                                  try {
+                                    await _dashboardOrdersFuture;
+                                  } catch (_) {}
+                                },
+                                child: _RecentOrdersList(
+                                  recentOrders: dashboardOrders.recentOrders,
+                                  avatarUrl: avatarSnapshot.data ?? '',
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+                  ),
+                  if (_isRefreshing)
+                    Positioned(
+                      top:
+                          MediaQuery.of(context).padding.top +
+                          kToolbarHeight +
+                          8,
+                      right: 16,
+                      child: const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -401,82 +444,83 @@ class _DashboardOrdersData {
 // ================================================================
 
 class _GreetingSection extends StatelessWidget {
-  const _GreetingSection();
+  const _GreetingSection({required this.avatarUrl});
 
-  String _salutation() {
-    final hour = DateTime.now().toLocal().hour;
-
-    if (hour < 12) {
-      return 'Good morning';
-    }
-
-    if (hour < 18) {
-      return 'Good afternoon';
-    }
-
-    return 'Good evening';
-  }
+  final String avatarUrl;
 
   @override
   Widget build(BuildContext context) {
-    final customerName = (CustomerSession.name?.trim().isNotEmpty == true)
+    final customerName = CustomerSession.name?.trim().isNotEmpty == true
         ? CustomerSession.name!.trim()
         : 'Customer';
 
     return Container(
       padding: const EdgeInsets.all(12),
-
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFFF8FBFF), Color(0xFFEAF2FF)],
+          colors: [Color(0xEBF8FBFF), Color(0xE6EAF2FF)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-
         borderRadius: BorderRadius.circular(16),
-
         border: Border.all(color: const Color(0xFFD7E5FF)),
-
         boxShadow: const [
           BoxShadow(
-            color: Color(0x102563EB),
-            blurRadius: 12,
-            offset: Offset(0, 5),
+            color: Color(0x0A233455),
+            blurRadius: 10,
+            offset: Offset(0, 4),
           ),
         ],
       ),
-
       child: Row(
         children: [
           Container(
-            width: 42,
-            height: 42,
-
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
               color: const Color(0xFF2563EB).withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
-
-            child: const Icon(
-              Icons.person_rounded,
-              color: Color(0xFF2563EB),
-              size: 22,
+            child: ClipOval(
+              child: avatarUrl.isEmpty
+                  ? const ColoredBox(
+                      color: Color(0xFFE4F0FF),
+                      child: Center(
+                        child: Icon(
+                          Icons.person_rounded,
+                          color: Color(0xFF2563EB),
+                          size: 24,
+                        ),
+                      ),
+                    )
+                  : Image.network(
+                      avatarUrl,
+                      width: 52,
+                      height: 52,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          const ColoredBox(
+                            color: Color(0xFFE4F0FF),
+                            child: Center(
+                              child: Icon(
+                                Icons.person_rounded,
+                                color: Color(0xFF2563EB),
+                                size: 24,
+                              ),
+                            ),
+                          ),
+                    ),
             ),
           ),
-
           const SizedBox(width: 10),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 Text(
-                  '${_salutation()}, $customerName 👋',
-
+                  customerName,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
@@ -484,9 +528,7 @@ class _GreetingSection extends StatelessWidget {
                     height: 1.05,
                   ),
                 ),
-
                 const SizedBox(height: 4),
-
                 const Text(
                   'Your water orders and active deliveries in one place.',
                   style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
@@ -513,101 +555,138 @@ class _OrderWaterCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
-
       child: InkWell(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
-
-        child: Ink(
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+        child: SizedBox(
+          width: double.infinity,
+          child: Ink(
+            decoration: BoxDecoration(
+              color: const Color(0xFF183B8F),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x26183B8F),
+                  blurRadius: 14,
+                  offset: Offset(0, 5),
+                ),
+              ],
             ),
-
-            borderRadius: BorderRadius.circular(20),
-
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x402563EB),
-                blurRadius: 20,
-                offset: Offset(0, 8),
-              ),
-            ],
-          ),
-
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-
-            children: [
-              const Text(
-                'Need water?',
-                style: TextStyle(
-                  color: Color(0xAAFFFFFF),
-                  fontSize: 12,
-                  letterSpacing: 0.4,
-                ),
-              ),
-
-              const SizedBox(height: 6),
-
-              const Text(
-                'Order Water Now',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
-                ),
-
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-
-                  children: [
-                    Icon(
-                      Icons.water_drop_rounded,
-                      color: Colors.white,
-                      size: 16,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    top: -24,
+                    bottom: -24,
+                    right: -20,
+                    width: 200,
+                    child: Image.asset(
+                      'assets/images/flashing water&gallons.png',
+                      fit: BoxFit.cover,
+                      alignment: Alignment.center,
                     ),
-
-                    SizedBox(width: 6),
-
-                    Text(
-                      'Place Order',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                  ),
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            const Color(0xFF183B8F),
+                            const Color(0xFF183B8F),
+                            const Color(0xFF183B8F).withValues(alpha: 0.92),
+                            const Color(0xFF183B8F).withValues(alpha: 0),
+                          ],
+                          stops: const [0, 0.36, 0.58, 0.88],
+                        ),
                       ),
                     ),
-
-                    SizedBox(width: 6),
-
-                    Icon(
-                      Icons.arrow_forward_rounded,
-                      color: Colors.white,
-                      size: 16,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 100),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'ORDER WATER NOW',
+                            style: TextStyle(
+                              color: Color(0xFFB9D8FF),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          const Text(
+                            'Aqua en Lavada',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              height: 1.1,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Clean water, delivered to your home.',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Color(0xFFDCEBFF),
+                              fontSize: 11,
+                              height: 1.25,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.water_drop_rounded,
+                                  color: Color(0xFF183B8F),
+                                  size: 14,
+                                ),
+                                SizedBox(width: 5),
+                                Text(
+                                  'Place Order',
+                                  style: TextStyle(
+                                    color: Color(0xFF183B8F),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                SizedBox(width: 4),
+                                Icon(
+                                  Icons.arrow_forward_rounded,
+                                  color: Color(0xFF183B8F),
+                                  size: 14,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -620,43 +699,39 @@ class _OrderWaterCard extends StatelessWidget {
 // ================================================================
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title});
+  const _SectionHeader({required this.title, required this.onSeeAllTap});
 
   final String title;
+  final VoidCallback onSeeAllTap;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-
       children: [
         Text(
           title,
-
           style: const TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
             color: Color(0xFF0F172A),
           ),
         ),
-
-        Text(
-          'See all',
-
-          style: TextStyle(
-            fontSize: 13,
-            color: Theme.of(context).colorScheme.primary,
-            fontWeight: FontWeight.w500,
+        GestureDetector(
+          onTap: onSeeAllTap,
+          child: Text(
+            'See all →',
+            style: TextStyle(
+              fontSize: 13,
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
       ],
     );
   }
 }
-
-// ================================================================
-// ACTIVE ORDERS LIST
-// ================================================================
 
 class _ActiveOrdersList extends StatelessWidget {
   const _ActiveOrdersList({required this.activeOrders});
@@ -668,15 +743,12 @@ class _ActiveOrdersList extends StatelessWidget {
     if (activeOrders.isEmpty) {
       return Container(
         width: double.infinity,
-
         padding: const EdgeInsets.all(16),
-
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: const Color(0xE8FFFFFF),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
         ),
-
         child: const Text(
           'No active orders',
           style: TextStyle(
@@ -688,36 +760,19 @@ class _ActiveOrdersList extends StatelessWidget {
       );
     }
 
-    return SizedBox(
-      height: 175,
-
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-
-        children: [
-          for (int i = 0; i < activeOrders.length; i++) ...[
-            _ActiveOrderCard(order: activeOrders[i]),
-
-            if (i != activeOrders.length - 1) const SizedBox(width: 12),
-          ],
-        ],
-      ),
+    return AspectRatio(
+      aspectRatio: 2.22,
+      child: _ActiveOrderCard(order: activeOrders.first),
     );
   }
 }
-
-// ================================================================
-// ACTIVE ORDER CARD
-// ================================================================
 
 class _ActiveOrderCard extends StatelessWidget {
   const _ActiveOrderCard({required this.order});
 
   final Map<String, dynamic> order;
 
-  String _status() {
-    return '${order['status'] ?? ''}'.trim().toLowerCase();
-  }
+  String _status() => '${order['status'] ?? ''}'.trim().toLowerCase();
 
   String _statusLabel() {
     switch (_status()) {
@@ -791,36 +846,28 @@ class _ActiveOrderCard extends StatelessWidget {
     }
   }
 
-  String _orderLabel() {
-    final id = '${order['id'] ?? ''}';
-
-    if (id.isEmpty) {
-      return 'Order';
-    }
-
-    final short = id.length > 8 ? id.substring(0, 8) : id;
-
-    return 'Order #$short';
-  }
-
   @override
   Widget build(BuildContext context) {
     final gallons = order['gallons']?.toString() ?? '0';
-
     final address = '${order['address'] ?? 'No address'}';
+    final driverName = order['driver_name']?.toString().trim() ?? '';
+    final progress = switch (_status()) {
+      'pending' => 'Order pending',
+      'assigned' => 'Driver assigned',
+      'on_the_way' ||
+      'on the way' ||
+      'in_transit' ||
+      'in transit' ||
+      'in_progress' ||
+      'in progress' => 'On the way',
+      'preparing' => 'Preparing your order',
+      _ => _statusLabel(),
+    };
 
     return Container(
-      width: 160,
-
-      padding: const EdgeInsets.all(14),
-
+      width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white,
-
         borderRadius: BorderRadius.circular(16),
-
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
-
         boxShadow: const [
           BoxShadow(
             color: Color(0x0A233455),
@@ -829,106 +876,187 @@ class _ActiveOrderCard extends StatelessWidget {
           ),
         ],
       ),
-
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-
-        children: [
-          Text(
-            _orderLabel(),
-
-            style: const TextStyle(
-              fontSize: 10,
-              color: Color(0xFF94A3B8),
-              letterSpacing: 0.3,
-            ),
-
-            overflow: TextOverflow.ellipsis,
-          ),
-
-          const SizedBox(height: 6),
-
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-
-            decoration: BoxDecoration(
-              color: _badgeBg(),
-              borderRadius: BorderRadius.circular(20),
-            ),
-
-            child: Text(
-              _statusLabel(),
-
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: _badgeColor(),
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 8),
-
-          Text(
-            '$gallons Gallons',
-
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF0F172A),
-            ),
-
-            overflow: TextOverflow.ellipsis,
-          ),
-
-          const SizedBox(height: 4),
-
-          Text(
-            address,
-
-            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-
-          const Spacer(),
-
-          SizedBox(
-            width: double.infinity,
-
-            child: OutlinedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => CustomerTrackOrderScreen(order: order),
-                  ),
-                );
-              },
-
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF2563EB),
-
-                side: const BorderSide(color: Color(0xFFBFDBFE), width: 0.5),
-
-                backgroundColor: const Color(0xFFF1F5F9),
-
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.asset(
+                  'assets/images/active-orders.jpg',
+                  fit: BoxFit.fill,
+                  alignment: Alignment.center,
                 ),
-
-                padding: const EdgeInsets.symmetric(vertical: 8),
-              ),
-
-              child: const Text(
-                'Track →',
-
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ),
-        ],
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 42,
+                  width: constraints.maxWidth * 0.62,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          Colors.white.withValues(alpha: 0.94),
+                          Colors.white.withValues(alpha: 0.88),
+                          Colors.white.withValues(alpha: 0),
+                        ],
+                        stops: const [0, 0.72, 1],
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 12,
+                  top: 8,
+                  bottom: constraints.maxHeight * 0.26,
+                  width: constraints.maxWidth * 0.56,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _badgeBg(),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.local_shipping_outlined,
+                              size: 13,
+                              color: _badgeColor(),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              _statusLabel(),
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: _badgeColor(),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        '$gallons Containers',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0B285D),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        address,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF647EA6),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.location_on_rounded,
+                            size: 15,
+                            color: Color(0xFF1672D4),
+                          ),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(
+                              progress,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF1672D4),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (driverName.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.delivery_dining_rounded,
+                              size: 19,
+                              color: Color(0xFF2563EB),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                driverName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF0B285D),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Positioned(
+                  left: constraints.maxWidth * 0.049,
+                  bottom: constraints.maxHeight * 0.046,
+                  width: constraints.maxWidth * 0.427,
+                  height: constraints.maxHeight * 0.142,
+                  child: Semantics(
+                    button: true,
+                    label: 'Track Live',
+                    child: Material(
+                      color: const Color(0xFF167DE5),
+                      borderRadius: BorderRadius.circular(20),
+                      child: InkWell(
+                        onTap: () => CustomerNavController.instance.goTo(2),
+                        borderRadius: BorderRadius.circular(20),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.map_outlined, size: 14),
+                            SizedBox(width: 5),
+                            Text(
+                              'Track Live',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            SizedBox(width: 5),
+                            Icon(Icons.arrow_forward_rounded, size: 14),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -939,51 +1067,52 @@ class _ActiveOrderCard extends StatelessWidget {
 // ================================================================
 
 class _RecentOrdersList extends StatelessWidget {
-  const _RecentOrdersList({required this.recentOrders});
+  const _RecentOrdersList({
+    required this.recentOrders,
+    required this.avatarUrl,
+  });
 
   final List<Map<String, dynamic>> recentOrders;
+  final String avatarUrl;
 
   @override
   Widget build(BuildContext context) {
     if (recentOrders.isEmpty) {
-      return Container(
-        width: double.infinity,
-
-        padding: const EdgeInsets.all(16),
-
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-
-          border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
-        ),
-
-        child: const Text(
-          'No recent orders',
-          style: TextStyle(
-            fontSize: 13,
-            color: Color(0xFF64748B),
-            fontWeight: FontWeight.w600,
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 12),
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xE8FFFFFF),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE2E8F0), width: 0.5),
+            ),
+            child: const Text(
+              'No recent orders',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF64748B),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-        ),
+        ],
       );
     }
 
-    return Column(
-      children: [
-        for (int i = 0; i < recentOrders.length; i++) ...[
-          _RecentOrderTile(order: recentOrders[i]),
-
-          if (i != recentOrders.length - 1) const SizedBox(height: 8),
-        ],
-      ],
+    return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 12),
+      itemCount: recentOrders.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 8),
+      itemBuilder: (context, index) =>
+          _RecentOrderTile(order: recentOrders[index], avatarUrl: avatarUrl),
     );
   }
 }
-
-// ================================================================
-// RECENT ORDERS HEADER
-// ================================================================
 
 class _RecentOrdersHeader extends StatelessWidget {
   const _RecentOrdersHeader({required this.onSeeAllTap});
@@ -994,24 +1123,19 @@ class _RecentOrdersHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-
       children: [
         const Text(
           'Recent Orders',
-
           style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
             color: Color(0xFF0F172A),
           ),
         ),
-
         GestureDetector(
           onTap: onSeeAllTap,
-
           child: Text(
             'See All →',
-
             style: TextStyle(
               fontSize: 13,
               color: Theme.of(context).colorScheme.primary,
@@ -1029,20 +1153,17 @@ class _RecentOrdersHeader extends StatelessWidget {
 // ================================================================
 
 class _RecentOrderTile extends StatelessWidget {
-  const _RecentOrderTile({required this.order});
+  const _RecentOrderTile({required this.order, required this.avatarUrl});
 
   final Map<String, dynamic> order;
+  final String avatarUrl;
 
   String _orderLabel() {
-    final id = '${order['id'] ?? ''}';
+    final customerName = (order['customer_name'] ?? order['name'] ?? 'Customer')
+        .toString()
+        .trim();
 
-    if (id.isEmpty) {
-      return 'Order';
-    }
-
-    final short = id.length > 8 ? id.substring(0, 8) : id;
-
-    return 'Order #$short';
+    return customerName.isEmpty ? 'Customer' : customerName;
   }
 
   String _priceLabel() {
@@ -1177,11 +1298,36 @@ class _RecentOrderTile extends StatelessWidget {
     return months[month - 1];
   }
 
+  Widget _profileAvatar() {
+    final imageUrl = avatarUrl.trim();
+    if (imageUrl.isEmpty) {
+      return _fallbackAvatar();
+    }
+
+    return ClipOval(
+      child: Image.network(
+        imageUrl,
+        width: 40,
+        height: 40,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => _fallbackAvatar(),
+      ),
+    );
+  }
+
+  Widget _fallbackAvatar() {
+    return const CircleAvatar(
+      radius: 20,
+      backgroundColor: Color(0xFFEFF6FF),
+      child: Icon(Icons.person_outline, color: Color(0xFF2563EB), size: 21),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xE8FFFFFF),
 
         borderRadius: BorderRadius.circular(14),
 
@@ -1199,21 +1345,7 @@ class _RecentOrderTile extends StatelessWidget {
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
 
-        leading: Container(
-          width: 40,
-          height: 40,
-
-          decoration: BoxDecoration(
-            color: const Color(0xFFEFF6FF),
-            borderRadius: BorderRadius.circular(10),
-          ),
-
-          child: const Icon(
-            Icons.water_drop_outlined,
-            color: Color(0xFF2563EB),
-            size: 20,
-          ),
-        ),
+        leading: _profileAvatar(),
 
         title: Text(
           _orderLabel(),

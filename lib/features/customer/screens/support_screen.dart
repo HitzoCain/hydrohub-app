@@ -12,7 +12,7 @@ class SupportScreen extends StatelessWidget {
     _FaqItem(
       question: 'How to order water?',
       answer:
-          'Go to the Order screen, select the number of gallons, choose your delivery details, then tap Place Order.',
+          'Go to the Order screen, select the number of containers, choose your delivery details, then tap Place Order.',
     ),
     _FaqItem(
       question: 'How to track my order?',

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 
@@ -56,20 +57,27 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
     }
 
     final orders = driverIds.length == 1
-      ? await Supabase.instance.client
-          .from('orders')
-          .select()
-          .eq('driver_id', driverIds.first)
-          .inFilter('status', ['assigned', 'in_progress', 'on_the_way'])
-      : await Supabase.instance.client
-          .from('orders')
-          .select()
-          .inFilter('driver_id', driverIds)
-          .inFilter('status', ['assigned', 'in_progress', 'on_the_way']);
+        ? await Supabase.instance.client
+              .from('orders')
+              .select()
+              .eq('driver_id', driverIds.first)
+              .inFilter('status', ['assigned', 'in_progress', 'on_the_way'])
+        : await Supabase.instance.client
+              .from('orders')
+              .select()
+              .inFilter('driver_id', driverIds)
+              .inFilter('status', ['assigned', 'in_progress', 'on_the_way']);
 
-    return orders
-        .whereType<Map<String, dynamic>>()
-        .map(_mapActiveOrder)
+    final orderRows = orders.whereType<Map<String, dynamic>>().toList();
+    final avatarUrls = await _fetchCustomerAvatarUrls(orderRows);
+
+    return orderRows
+        .map(
+          (order) => _mapActiveOrder(
+            order,
+            avatarUrl: avatarUrls[order['customer_id']?.toString() ?? ''] ?? '',
+          ),
+        )
         .toList();
   }
 
@@ -81,23 +89,60 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
     }
 
     final orders = driverIds.length == 1
-      ? await Supabase.instance.client
-          .from('orders')
-          .select()
-          .eq('driver_id', driverIds.first)
-          .inFilter('status', ['delivered', 'completed'])
-          .order('created_at', ascending: false)
-      : await Supabase.instance.client
-          .from('orders')
-          .select()
-          .inFilter('driver_id', driverIds)
-          .inFilter('status', ['delivered', 'completed'])
-          .order('created_at', ascending: false);
+        ? await Supabase.instance.client
+              .from('orders')
+              .select()
+              .eq('driver_id', driverIds.first)
+              .inFilter('status', ['delivered', 'completed'])
+              .order('created_at', ascending: false)
+        : await Supabase.instance.client
+              .from('orders')
+              .select()
+              .inFilter('driver_id', driverIds)
+              .inFilter('status', ['delivered', 'completed'])
+              .order('created_at', ascending: false);
 
-    return orders
-        .whereType<Map<String, dynamic>>()
-        .map(_mapCompletedOrder)
+    final orderRows = orders.whereType<Map<String, dynamic>>().toList();
+    final avatarUrls = await _fetchCustomerAvatarUrls(orderRows);
+
+    return orderRows
+        .map(
+          (order) => _mapCompletedOrder(
+            order,
+            avatarUrl: avatarUrls[order['customer_id']?.toString() ?? ''] ?? '',
+          ),
+        )
         .toList();
+  }
+
+  Future<Map<String, String>> _fetchCustomerAvatarUrls(
+    List<Map<String, dynamic>> orders,
+  ) async {
+    final customerIds = orders
+        .map((order) => order['customer_id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    if (customerIds.isEmpty) return {};
+
+    try {
+      final profiles = await Supabase.instance.client
+          .from('customer_profiles')
+          .select('user_id, avatar_url')
+          .inFilter('user_id', customerIds);
+      final avatarUrls = <String, String>{};
+      for (final profile in profiles.whereType<Map<String, dynamic>>()) {
+        final userId = profile['user_id']?.toString().trim() ?? '';
+        final avatarUrl = profile['avatar_url']?.toString().trim() ?? '';
+        if (userId.isNotEmpty && avatarUrl.isNotEmpty) {
+          avatarUrls[userId] = avatarUrl;
+        }
+      }
+      return avatarUrls;
+    } catch (error) {
+      debugPrint('Failed to load delivery customer photos: $error');
+      return {};
+    }
   }
 
   String _formatDate(dynamic value) {
@@ -117,7 +162,16 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
     return '${date.year}-$month-$day';
   }
 
-  _DeliveryItemData _mapActiveOrder(Map<String, dynamic> order) {
+  String _formatOrderDate(dynamic value) {
+    final date = DateTime.tryParse(value?.toString() ?? '');
+    if (date == null) return 'Unknown date';
+    return DateFormat('MMM d').format(date.toLocal());
+  }
+
+  _DeliveryItemData _mapActiveOrder(
+    Map<String, dynamic> order, {
+    required String avatarUrl,
+  }) {
     String textOf(dynamic value, {required String fallback}) {
       final text = value?.toString().trim();
       if (text == null || text.isEmpty) {
@@ -163,24 +217,28 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
       order['status'],
       fallback: 'assigned',
     ).toLowerCase();
-    final status =
-      rawStatus == 'in_progress'
+    final status = rawStatus == 'in_progress'
         ? 'on_the_way'
         : (rawStatus == 'on_the_way' || rawStatus == 'delivered'
-        ? rawStatus
-      : 'assigned');
+              ? rawStatus
+              : 'assigned');
 
     return _DeliveryItemData(
       orderId: 'Order #$orderId',
       customerName: customerName,
+      avatarUrl: avatarUrl,
       address: address,
+      orderDate: _formatOrderDate(order['created_at']),
       gallons: gallons,
       status: status,
       rawOrder: Map<String, dynamic>.from(order),
     );
   }
 
-  _DeliveryItemData _mapCompletedOrder(Map<String, dynamic> order) {
+  _DeliveryItemData _mapCompletedOrder(
+    Map<String, dynamic> order, {
+    required String avatarUrl,
+  }) {
     String textOf(dynamic value, {required String fallback}) {
       final text = value?.toString().trim();
       if (text == null || text.isEmpty) {
@@ -229,7 +287,9 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
     return _DeliveryItemData(
       orderId: 'Order #$orderId',
       customerName: customerName,
+      avatarUrl: avatarUrl,
       address: address,
+      orderDate: _formatOrderDate(order['created_at']),
       gallons: gallons,
       status: 'delivered',
       deliveredDate: deliveredDate,
@@ -572,7 +632,22 @@ class _CompletedOrdersList extends StatelessWidget {
                 ),
                 child: _DeliveryCard(
                   delivery: delivery,
-                  onTap: null,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => DriverOrderDetailsScreen(
+                          customerName: delivery.customerName,
+                          orderId: delivery.orderId,
+                          status: delivery.status,
+                          contactNumber: '+63 912 345 6789',
+                          address: delivery.address,
+                          totalGallons: delivery.gallons,
+                          initialOrder: delivery.rawOrder,
+                        ),
+                      ),
+                    );
+                  },
                   isReadOnly: true,
                 ),
               );
@@ -595,22 +670,10 @@ class _DeliveryCard extends StatelessWidget {
   final VoidCallback? onTap;
   final bool isReadOnly;
 
-  String _shortOrderId(String value) {
-    const prefix = 'Order #';
-    final rawId = value.startsWith(prefix)
-        ? value.substring(prefix.length)
-        : value;
-
-    if (rawId.length <= 12) {
-      return value;
-    }
-
-    return '$prefix${rawId.substring(0, 4)}...${rawId.substring(rawId.length - 4)}';
-  }
-
   @override
   Widget build(BuildContext context) {
     final statusTheme = _statusTheme(delivery.status);
+    final avatarUrl = delivery.avatarUrl;
 
     return Material(
       color: Colors.white,
@@ -631,20 +694,32 @@ class _DeliveryCard extends StatelessWidget {
             ],
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Container(
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
                   color: const Color(0xFFEFF6FF),
-                  borderRadius: BorderRadius.circular(12),
+                  shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.local_shipping_outlined,
-                  color: Color(0xFF2563EB),
-                  size: 22,
-                ),
+                clipBehavior: Clip.antiAlias,
+                child: avatarUrl == null || avatarUrl.isEmpty
+                    ? const Icon(
+                        Icons.person_outline_rounded,
+                        color: Color(0xFF2563EB),
+                        size: 22,
+                      )
+                    : Image.network(
+                        avatarUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            const Icon(
+                              Icons.person_outline_rounded,
+                              color: Color(0xFF2563EB),
+                              size: 22,
+                            ),
+                      ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -661,64 +736,64 @@ class _DeliveryCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      delivery.address,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${delivery.gallons} Gallons',
+                      '${delivery.gallons} Containers',
                       style: const TextStyle(
                         fontSize: 13,
                         color: Color(0xFF334155),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _shortOrderId(delivery.orderId),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF64748B),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (isReadOnly && delivery.deliveredDate != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Delivered: ${delivery.deliveredDate}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF15803D),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
               const SizedBox(width: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: statusTheme.background,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  _statusLabel(delivery.status),
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: statusTheme.foreground,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusTheme.background,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _statusLabel(delivery.status),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: statusTheme.foreground,
+                      ),
+                    ),
                   ),
-                ),
+                  if (isReadOnly && delivery.deliveredDate != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      delivery.deliveredDate!,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF15803D),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  if (!isReadOnly && delivery.orderDate != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      delivery.orderDate!,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF64748B),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),
@@ -778,7 +853,9 @@ class _DeliveryItemData {
   const _DeliveryItemData({
     required this.orderId,
     required this.customerName,
+    this.avatarUrl = '',
     required this.address,
+    this.orderDate,
     required this.gallons,
     required this.status,
     this.rawOrder,
@@ -787,7 +864,9 @@ class _DeliveryItemData {
 
   final String orderId;
   final String customerName;
+  final String? avatarUrl;
   final String address;
+  final String? orderDate;
   final int gallons;
   final String status;
   final Map<String, dynamic>? rawOrder;

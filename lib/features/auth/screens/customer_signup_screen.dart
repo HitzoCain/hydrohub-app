@@ -7,6 +7,7 @@ import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
 import '../../../models/philippine_location.dart';
 import '../../../utils/address_formatter.dart';
 import '../../../widgets/address/cascading_address_form.dart';
+import 'customer_email_otp_screen.dart';
 
 class CustomerSignupScreen extends StatefulWidget {
   const CustomerSignupScreen({super.key});
@@ -89,7 +90,9 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
       return requiredError;
     }
     final text = value!.trim();
-    final emailPattern = RegExp(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$');
+    final emailPattern = RegExp(
+      r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
+    );
     if (!emailPattern.hasMatch(text)) {
       return 'Enter a valid email address';
     }
@@ -208,106 +211,9 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
   }
 
   void _showFriendlyError(Object error) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(_friendlySignupError(error))),
-    );
-  }
-
-  Future<void> _showVerificationDialog(String email) async {
-    var isResending = false;
-
-    Future<void> resendVerificationEmail(StateSetter setDialogState) async {
-      setDialogState(() {
-        isResending = true;
-      });
-
-      try {
-        await Supabase.instance.client.auth.resend(
-          type: OtpType.signup,
-          email: email,
-          emailRedirectTo: 'io.supabase.flutter://login-callback',
-        );
-
-        if (!mounted) {
-          return;
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Verification email sent again.')),
-        );
-      } on AuthException catch (error) {
-        if (!mounted) {
-          return;
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_friendlySignupError(error))),
-        );
-      } catch (_) {
-        if (!mounted) {
-          return;
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Unable to resend verification email. Please try again.'),
-          ),
-        );
-      } finally {
-        if (mounted) {
-          setDialogState(() {
-            isResending = false;
-          });
-        }
-      }
-    }
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: const Text('Verify your email'),
-              content: Text(
-                'A verification email has been sent to $email. Please verify your email before logging in.',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isResending
-                      ? null
-                      : () async {
-                          await resendVerificationEmail(setDialogState);
-                        },
-                  child: isResending
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Resend Verification Email'),
-                ),
-                TextButton(
-                  onPressed: isResending
-                      ? null
-                      : () {
-                          Navigator.of(dialogContext).pop();
-                          if (mounted) {
-                            Navigator.of(context).pop();
-                          }
-                        },
-                  child: const Text('Back to Login'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_friendlySignupError(error))));
   }
 
   // Call this method after the user's first verified login.
@@ -394,7 +300,6 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
       final response = await supabase.auth.signUp(
         email: email,
         password: password,
-        emailRedirectTo: 'io.supabase.flutter://login-callback',
         data: {'full_name': name},
       );
 
@@ -419,7 +324,11 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
           _isLoading = false;
         });
 
-        await _showVerificationDialog(email);
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => CustomerEmailOtpScreen(email: email),
+          ),
+        );
         return;
       }
 
@@ -434,7 +343,9 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Internet connection lost. Please try again.')),
+        const SnackBar(
+          content: Text('Internet connection lost. Please try again.'),
+        ),
       );
     } catch (error) {
       if (!mounted) {
@@ -466,10 +377,7 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
       onChanged: onChanged,
       title: Text(
         label,
-        style: const TextStyle(
-          fontSize: 13,
-          color: Color(0xFF475569),
-        ),
+        style: const TextStyle(fontSize: 13, color: Color(0xFF475569)),
       ),
     );
   }
@@ -575,24 +483,25 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
                           onChanged: (_) {
                             setState(() {});
                           },
-                          decoration: _inputDecoration(
-                            'Password',
-                            icon: Icons.lock_outline,
-                          ).copyWith(
-                            suffixIcon: IconButton(
-                              icon: Icon(
-                                _passwordVisible
-                                    ? Icons.visibility_off_outlined
-                                    : Icons.visibility_outlined,
-                                color: const Color(0xFF94A3B8),
+                          decoration:
+                              _inputDecoration(
+                                'Password',
+                                icon: Icons.lock_outline,
+                              ).copyWith(
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _passwordVisible
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                    color: const Color(0xFF94A3B8),
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _passwordVisible = !_passwordVisible;
+                                    });
+                                  },
+                                ),
                               ),
-                              onPressed: () {
-                                setState(() {
-                                  _passwordVisible = !_passwordVisible;
-                                });
-                              },
-                            ),
-                          ),
                           validator: _validatePassword,
                         ),
                         const SizedBox(height: 8),
@@ -609,7 +518,9 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
                                 ),
                               ),
                               Text(
-                                _passwordStrengthLabel(_passwordController.text),
+                                _passwordStrengthLabel(
+                                  _passwordController.text,
+                                ),
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
@@ -626,25 +537,26 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
                           controller: _confirmPasswordController,
                           obscureText: !_confirmPasswordVisible,
                           textInputAction: TextInputAction.next,
-                          decoration: _inputDecoration(
-                            'Confirm Password',
-                            icon: Icons.lock_outline,
-                          ).copyWith(
-                            suffixIcon: IconButton(
-                              icon: Icon(
-                                _confirmPasswordVisible
-                                    ? Icons.visibility_off_outlined
-                                    : Icons.visibility_outlined,
-                                color: const Color(0xFF94A3B8),
+                          decoration:
+                              _inputDecoration(
+                                'Confirm Password',
+                                icon: Icons.lock_outline,
+                              ).copyWith(
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _confirmPasswordVisible
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                    color: const Color(0xFF94A3B8),
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _confirmPasswordVisible =
+                                          !_confirmPasswordVisible;
+                                    });
+                                  },
+                                ),
                               ),
-                              onPressed: () {
-                                setState(() {
-                                  _confirmPasswordVisible =
-                                      !_confirmPasswordVisible;
-                                });
-                              },
-                            ),
-                          ),
                           validator: _validateConfirmPassword,
                         ),
                         const SizedBox(height: 12),
@@ -673,6 +585,9 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
                         const SizedBox(height: 10),
                         CascadingAddressForm(
                           showMapPicker: false,
+                          targetRegionName: 'Eastern Visayas',
+                          targetProvinceName: 'Samar',
+                          targetCityMunicipalityName: 'City of Catbalogan',
                           onPickLocation: () async => null,
                           onSave: (data, _) async {
                             final formatted = formatAddressParts(
@@ -744,9 +659,10 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
                                         height: 20,
                                         child: CircularProgressIndicator(
                                           strokeWidth: 2.4,
-                                          valueColor: AlwaysStoppedAnimation<Color>(
-                                            Colors.white,
-                                          ),
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                Colors.white,
+                                              ),
                                         ),
                                       ),
                                       const SizedBox(height: 4),

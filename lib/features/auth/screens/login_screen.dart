@@ -4,8 +4,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/customer_signup_screen.dart';
-import 'package:aqua_in_laba_app/features/customer/customer_session.dart';
-import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_shell.dart';
 import 'package:aqua_in_laba_app/features/driver/screens/driver_dashboard_screen.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 
@@ -20,7 +18,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   static const String _googleRedirectTo =
-  'io.supabase.flutter://login-callback';
+      'io.supabase.flutter://login-callback';
 
   final _formKey = GlobalKey<FormState>();
 
@@ -30,106 +28,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   UserRole _selectedRole = UserRole.customer;
   bool _isLoading = false;
-  StreamSubscription<AuthState>? _authStateSubscription;
-  bool _isNavigatingAfterAuth = false;
 
   @override
   void initState() {
     super.initState();
-    _listenForAuthStateChanges();
-    _checkCustomerSessionOnStart();
     _restoreDriverSession();
-  }
-
-  void _listenForAuthStateChanges() {
-    _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange
-        .listen((data) async {
-          final session = data.session;
-          if (session == null || _isNavigatingAfterAuth || !mounted) {
-            return;
-          }
-
-          debugPrint('Logged in: ${session.user.email}');
-          final user = session.user;
-
-          if (user.emailConfirmedAt == null) {
-            await Supabase.instance.client.auth.signOut();
-            if (!mounted) {
-              return;
-            }
-
-            _showEmailVerificationMessage(email: user.email ?? '');
-            return;
-          }
-
-          try {
-            await _handleVerifiedCustomerSession(user);
-          } catch (e) {
-            debugPrint('Post Google-login session sync error: $e');
-          }
-        });
-  }
-
-  void _checkCustomerSessionOnStart() {
-    final session = Supabase.instance.client.auth.currentSession;
-    debugPrint('Current auth session on start: $session');
-
-    if (session == null || _isNavigatingAfterAuth || !mounted) {
-      return;
-    }
-
-    final user = session.user;
-    if (user.emailConfirmedAt == null) {
-      Supabase.instance.client.auth.signOut();
-      if (!mounted) {
-        return;
-      }
-
-      _showEmailVerificationMessage(email: user.email ?? '');
-      return;
-    }
-
-    Future.microtask(() async {
-      try {
-        await _handleVerifiedCustomerSession(user);
-      } catch (e) {
-        debugPrint('Startup customer session sync error: $e');
-      }
-    });
-  }
-
-  Future<void> createOrUpdateProfile(User user) async {
-    if (user.emailConfirmedAt == null) {
-      return;
-    }
-
-    final supabase = Supabase.instance.client;
-
-    try {
-      // Check if profile exists
-      final existing = await supabase
-          .from('customer_profiles')
-          .select()
-          .eq('user_id', user.id)
-          .maybeSingle();
-
-      if (existing == null) {
-        // Insert new profile
-        await supabase.from('customer_profiles').insert({
-          'user_id': user.id,
-          'name': user.userMetadata?['full_name']?.toString().trim() ?? '',
-          'email': user.email ?? '',
-          'phone': '',
-          'address': '',
-        });
-
-        debugPrint('Profile created for user: ${user.id}');
-      } else {
-        debugPrint('Profile already exists for user: ${user.id}');
-      }
-    } catch (e) {
-      debugPrint('Profile error: $e');
-    }
   }
 
   Future<void> signInWithGoogle() async {
@@ -193,7 +96,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    _authStateSubscription?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
     _secretCodeController.dispose();
@@ -240,19 +142,9 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
 
-        if (user != null) {
-          try {
-            await _handleVerifiedCustomerSession(user);
-          } catch (profileError) {
-            debugPrint('Profile load error: $profileError');
-            // Continue with partial data if profile fetch fails
-          }
-        }
-
         if (!mounted) {
           return;
         }
-
       } else {
         final inputCode = _secretCodeController.text.trim();
         final supabase = Supabase.instance.client;
@@ -301,7 +193,11 @@ class _LoginScreenState extends State<LoginScreen> {
           loggedInDriverId = driverId;
           loggedInDriverName = driverName;
 
-          await DriverSession.save(driverId: driverId, driverName: driverName);
+          await DriverSession.save(
+            driverId: driverId,
+            driverName: driverName,
+            driverAccessCode: inputCode,
+          );
         } on PostgrestException {
           if (!mounted) {
             return;
@@ -408,60 +304,6 @@ class _LoginScreenState extends State<LoginScreen> {
     return 'Login failed. Please try again.';
   }
 
-  // TODO: Keep the mobile verification redirect aligned with Supabase and
-  // platform deep-link settings so verified users return to the Flutter app.
-
-  Future<void> _handleVerifiedCustomerSession(User user) async {
-    if (_isNavigatingAfterAuth) {
-      return;
-    }
-
-    if (user.emailConfirmedAt == null) {
-      await Supabase.instance.client.auth.signOut();
-      if (!mounted) {
-        return;
-      }
-
-      _isNavigatingAfterAuth = false;
-      _showEmailVerificationMessage(email: user.email ?? '');
-      return;
-    }
-
-    _isNavigatingAfterAuth = true;
-
-    try {
-      await DriverSession.clear();
-      await createOrUpdateProfile(user);
-
-      final profile = await Supabase.instance.client
-          .from('customer_profiles')
-          .select()
-          .eq('user_id', user.id)
-          .single();
-
-      await CustomerSession.save(
-        customerId: user.id,
-        customerName: profile['name'] ?? '',
-        customerPhone: profile['phone'],
-        customerAddress: profile['address'],
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(
-          builder: (_) => const CustomerNavShell(),
-        ),
-        (route) => false,
-      );
-    } catch (_) {
-      _isNavigatingAfterAuth = false;
-      rethrow;
-    }
-  }
-
   void _showEmailVerificationMessage({String email = ''}) {
     if (!mounted) {
       return;
@@ -471,9 +313,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text(
-          'Please verify your email before logging in.',
-        ),
+        content: const Text('Please verify your email before logging in.'),
         action: hasEmail
             ? SnackBarAction(
                 label: 'Resend',
@@ -503,9 +343,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Verification email sent again.'),
-        ),
+        const SnackBar(content: Text('Verification email sent again.')),
       );
     } on AuthException catch (e) {
       if (!mounted) {
@@ -515,7 +353,9 @@ class _LoginScreenState extends State<LoginScreen> {
       debugPrint('Verification resend auth error: ${e.message}');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Unable to resend verification email. Please try again.'),
+          content: Text(
+            'Unable to resend verification email. Please try again.',
+          ),
         ),
       );
     } catch (e) {
@@ -526,7 +366,9 @@ class _LoginScreenState extends State<LoginScreen> {
       debugPrint('Verification resend error: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Unable to resend verification email. Please try again.'),
+          content: Text(
+            'Unable to resend verification email. Please try again.',
+          ),
         ),
       );
     }
