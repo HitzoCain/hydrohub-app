@@ -26,6 +26,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
 
   late Future<_DriverProfileData> _profileFuture;
   bool _isUploadingPhoto = false;
+  int _profileRefreshToken = 0;
 
   @override
   void initState() {
@@ -163,6 +164,10 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
             response['name'],
             response['driver_name'],
           );
+          final profileFirstLastName = [
+            response['first_name']?.toString().trim() ?? '',
+            response['last_name']?.toString().trim() ?? '',
+          ].where((part) => part.isNotEmpty).join(' ');
           final profileEmail = _firstNonEmptyString(
             response['email'],
             response['work_email'],
@@ -172,8 +177,8 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
             response['id'],
           );
 
-          if (profileName.isNotEmpty) {
-            name = profileName;
+          if (profileName.isNotEmpty || profileFirstLastName.isNotEmpty) {
+            name = profileName.isNotEmpty ? profileName : profileFirstLastName;
           }
           if (profileEmail.isNotEmpty) {
             email = profileEmail;
@@ -315,7 +320,9 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                         onChangePhoto: _changeProfilePhoto,
                       ),
                       const SizedBox(height: 16),
-                      const _DriverAvailabilityCard(),
+                      _DriverAvailabilityCard(
+                        key: ValueKey(_profileRefreshToken),
+                      ),
                       const SizedBox(height: 16),
                       _DriverInfoCard(employeeId: profile.employeeId),
                       const SizedBox(height: 16),
@@ -324,7 +331,22 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                         totalCompleted: profile.totalCompleted,
                       ),
                       const SizedBox(height: 16),
-                      const _ActionsSection(),
+                      _ActionsSection(
+                        onEditProfile: () async {
+                          final updated = await Navigator.push<bool>(
+                            context,
+                            MaterialPageRoute<bool>(
+                              builder: (_) => const DriverEditProfileScreen(),
+                            ),
+                          );
+                          if (updated == true && mounted) {
+                            setState(() {
+                              _profileFuture = _loadProfileData();
+                              _profileRefreshToken++;
+                            });
+                          }
+                        },
+                      ),
                       const SizedBox(height: 16),
                       const _LogoutButton(),
                     ],
@@ -520,7 +542,9 @@ class _QuickStatsCard extends StatelessWidget {
 }
 
 class _ActionsSection extends StatelessWidget {
-  const _ActionsSection();
+  const _ActionsSection({required this.onEditProfile});
+
+  final VoidCallback onEditProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -541,14 +565,7 @@ class _ActionsSection extends StatelessWidget {
             icon: Icons.edit_outlined,
             iconColor: Color(0xFF2563EB),
             title: 'Edit Profile',
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) => const DriverEditProfileScreen(),
-                ),
-              );
-            },
+            onTap: onEditProfile,
           ),
           const SizedBox(height: 8),
           _ActionTile(
@@ -616,7 +633,7 @@ class _LogoutButton extends StatelessWidget {
 }
 
 class _DriverAvailabilityCard extends StatefulWidget {
-  const _DriverAvailabilityCard();
+  const _DriverAvailabilityCard({super.key});
 
   @override
   State<_DriverAvailabilityCard> createState() =>

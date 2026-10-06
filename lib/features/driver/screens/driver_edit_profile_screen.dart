@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class DriverEditProfileScreen extends StatefulWidget {
   const DriverEditProfileScreen({super.key});
@@ -16,14 +18,21 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
   late final TextEditingController _nameController;
   late final TextEditingController _phoneController;
 
-  DriverStatus _selectedStatus = DriverStatus.active;
+  Map<String, dynamic>? _employee;
+  String? _phoneColumn;
+  String _driverId = '';
+  String _avatarUrl = '';
+  String? _loadError;
+  DriverStatus _selectedStatus = DriverStatus.offline;
+  bool _isLoading = true;
   bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: 'Driver John');
-    _phoneController = TextEditingController(text: '09123456789');
+    _nameController = TextEditingController();
+    _phoneController = TextEditingController();
+    _loadProfile();
   }
 
   @override
@@ -33,7 +42,91 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
     super.dispose();
   }
 
+  Future<void> _loadProfile() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
+
+    try {
+      final session = await DriverSession.load();
+      final driverId = session?.id.trim() ?? '';
+      if (driverId.isEmpty) {
+        throw StateError(
+          'Driver session is unavailable. Please sign in again.',
+        );
+      }
+
+      final employee = await Supabase.instance.client
+          .from('employees')
+          .select()
+          .eq('id', driverId)
+          .maybeSingle();
+      if (employee == null) {
+        throw StateError('Driver profile could not be found.');
+      }
+
+      final row = Map<String, dynamic>.from(employee);
+      final name = _resolveName(row, fallback: session?.name ?? 'Driver');
+      String? phoneColumn;
+      for (final candidate in const [
+        'phone',
+        'phone_number',
+        'mobile',
+        'mobile_number',
+        'contact_number',
+      ]) {
+        if (row.containsKey(candidate)) {
+          phoneColumn = candidate;
+          break;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _employee = row;
+        _driverId = driverId;
+        _phoneColumn = phoneColumn;
+        _avatarUrl = row['profile_image_url']?.toString().trim() ?? '';
+        _nameController.text = name;
+        _phoneController.text = phoneColumn == null
+            ? ''
+            : row[phoneColumn]?.toString() ?? '';
+        final status = row['driver_status']?.toString().toLowerCase();
+        _selectedStatus = status == 'online' || status == 'active'
+            ? DriverStatus.online
+            : DriverStatus.offline;
+        _isLoading = false;
+      });
+    } catch (error) {
+      debugPrint('Failed to load driver edit profile: $error');
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Unable to load your profile. Please try again.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  String _resolveName(Map<String, dynamic> row, {required String fallback}) {
+    for (final field in const ['full_name', 'name', 'driver_name']) {
+      final value = row[field]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+
+    final firstName = row['first_name']?.toString().trim() ?? '';
+    final lastName = row['last_name']?.toString().trim() ?? '';
+    final combinedName = [
+      firstName,
+      lastName,
+    ].where((part) => part.isNotEmpty).join(' ');
+    return combinedName.isEmpty ? fallback : combinedName;
+  }
+
   Future<void> _saveChanges() async {
+    final employee = _employee;
+    if (employee == null || _driverId.isEmpty) return;
+
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) {
       return;
@@ -43,23 +136,72 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
       _isSaving = true;
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 500));
+    try {
+      final updates = <String, dynamic>{};
+      final name = _nameController.text.trim();
+      var nameUpdated = false;
+      for (final field in const ['full_name', 'name', 'driver_name']) {
+        if (employee.containsKey(field)) {
+          updates[field] = name;
+          nameUpdated = true;
+          break;
+        }
+      }
+      if (!nameUpdated &&
+          (employee.containsKey('first_name') ||
+              employee.containsKey('last_name'))) {
+        final parts = name.split(RegExp(r'\s+'));
+        if (employee.containsKey('first_name')) {
+          updates['first_name'] = parts.first;
+        }
+        if (employee.containsKey('last_name')) {
+          updates['last_name'] = parts.length > 1
+              ? parts.skip(1).join(' ')
+              : '';
+        }
+        nameUpdated = true;
+      }
+      if (!nameUpdated) {
+        throw StateError('No editable name field exists on this profile.');
+      }
 
-    if (!mounted) {
-      return;
+      final phoneColumn = _phoneColumn;
+      if (phoneColumn != null) {
+        updates[phoneColumn] = _phoneController.text.trim();
+      }
+      if (employee.containsKey('driver_status')) {
+        updates['driver_status'] = _selectedStatus == DriverStatus.online
+            ? 'online'
+            : 'offline';
+      }
+
+      final savedEmployee = await Supabase.instance.client
+          .from('employees')
+          .update(updates)
+          .eq('id', _driverId)
+          .select('id')
+          .maybeSingle();
+      if (savedEmployee == null) {
+        throw StateError('The profile could not be saved.');
+      }
+
+      await DriverSession.updateName(name);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Profile updated.')));
+      Navigator.pop(context, true);
+    } catch (error) {
+      debugPrint('Failed to save driver edit profile: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Unable to save your profile.')),
+        );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
-
-    setState(() {
-      _isSaving = false;
-    });
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(content: Text('Profile updated (UI only).')),
-      );
-
-    Navigator.pop(context);
   }
 
   InputDecoration _inputDecoration({
@@ -113,149 +255,180 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
         scrolledUnderElevation: 0,
       ),
       body: SafeArea(
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x12233455),
-                      blurRadius: 14,
-                      offset: Offset(0, 6),
-                    ),
-                  ],
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _loadError != null
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_loadError!, textAlign: TextAlign.center),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: _loadProfile,
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
                 ),
-                child: Column(
+              )
+            : Form(
+                key: _formKey,
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
                   children: [
                     Container(
-                      width: 76,
-                      height: 76,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Color(0xFFEFF6FF),
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x12233455),
+                            blurRadius: 14,
+                            offset: Offset(0, 6),
+                          ),
+                        ],
                       ),
-                      child: const Icon(
-                        Icons.person,
-                        size: 40,
-                        color: _primaryBlue,
+                      child: Column(
+                        children: [
+                          CircleAvatar(
+                            radius: 38,
+                            backgroundColor: const Color(0xFFEFF6FF),
+                            backgroundImage: _avatarUrl.isEmpty
+                                ? null
+                                : NetworkImage(_avatarUrl),
+                            child: _avatarUrl.isEmpty
+                                ? const Icon(
+                                    Icons.person,
+                                    size: 40,
+                                    color: _primaryBlue,
+                                  )
+                                : null,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            _nameController.text,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Delivery Driver',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Driver John',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF0F172A),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _nameController,
+                      textInputAction: TextInputAction.next,
+                      onChanged: (_) => setState(() {}),
+                      decoration: _inputDecoration(
+                        label: 'Full Name',
+                        hint: 'Enter full name',
                       ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Full name is required';
+                        }
+                        return null;
+                      },
                     ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Delivery Driver',
-                      style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: _phoneController,
+                      enabled: _phoneColumn != null,
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.done,
+                      decoration:
+                          _inputDecoration(
+                            label: 'Phone Number',
+                            hint: 'Enter phone number',
+                          ).copyWith(
+                            helperText: _phoneColumn == null
+                                ? 'No phone field is configured for this driver.'
+                                : null,
+                          ),
+                    ),
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<DriverStatus>(
+                      initialValue: _selectedStatus,
+                      borderRadius: BorderRadius.circular(12),
+                      decoration: _inputDecoration(
+                        label: 'Status',
+                        hint: 'Select status',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: DriverStatus.online,
+                          child: Text('Online'),
+                        ),
+                        DropdownMenuItem(
+                          value: DriverStatus.offline,
+                          child: Text('Offline'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setState(() {
+                          _selectedStatus = value;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: _isSaving ? null : _saveChanges,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _primaryBlue,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: const Color(0xFF93C5FD),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: _isSaving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Text(
+                                'Save Changes',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                      ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _nameController,
-                textInputAction: TextInputAction.next,
-                decoration: _inputDecoration(
-                  label: 'Full Name',
-                  hint: 'Enter full name',
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Full name is required';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 14),
-              TextFormField(
-                controller: _phoneController,
-                keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.done,
-                decoration: _inputDecoration(
-                  label: 'Phone Number',
-                  hint: 'Enter phone number',
-                ),
-              ),
-              const SizedBox(height: 14),
-              DropdownButtonFormField<DriverStatus>(
-                initialValue: _selectedStatus,
-                borderRadius: BorderRadius.circular(12),
-                decoration: _inputDecoration(
-                  label: 'Status',
-                  hint: 'Select status',
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: DriverStatus.active,
-                    child: Text('Active'),
-                  ),
-                  DropdownMenuItem(
-                    value: DriverStatus.offline,
-                    child: Text('Offline'),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value == null) {
-                    return;
-                  }
-                  setState(() {
-                    _selectedStatus = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _isSaving ? null : _saveChanges,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _primaryBlue,
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: const Color(0xFF93C5FD),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: _isSaving
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                          ),
-                        )
-                      : const Text(
-                          'Save Changes',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
 }
 
-enum DriverStatus { active, offline }
+enum DriverStatus { online, offline }

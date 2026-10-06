@@ -51,6 +51,13 @@ class DriverSession {
     accessCode = driverAccessCode;
   }
 
+  static Future<void> updateName(String driverName) async {
+    final cleanName = driverName.trim();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_driverNameKey, cleanName);
+    name = cleanName;
+  }
+
   static Future<DriverSessionData?> load() async {
     final prefs = await SharedPreferences.getInstance();
     final driverId = prefs.getString(_driverIdKey);
