@@ -674,6 +674,8 @@ class _DeliveryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final statusTheme = _statusTheme(delivery.status);
     final avatarUrl = delivery.avatarUrl;
+    final deliveryInstructions =
+        delivery.rawOrder?['delivery_instructions']?.toString().trim() ?? '';
 
     return Material(
       color: Colors.white,
@@ -743,6 +745,31 @@ class _DeliveryCard extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    if (deliveryInstructions.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.sticky_note_2_outlined,
+                            size: 14,
+                            color: Color(0xFFB45309),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              deliveryInstructions,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF92400E),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

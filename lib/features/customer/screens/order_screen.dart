@@ -60,6 +60,8 @@ class _OrderScreenState extends State<OrderScreen> {
   final TextEditingController _borrowController = TextEditingController(
     text: '0',
   );
+  final TextEditingController _deliveryInstructionsController =
+      TextEditingController();
   bool _borrowEnabled = true;
   String? _containerAllocationError;
 
@@ -80,6 +82,7 @@ class _OrderScreenState extends State<OrderScreen> {
     _exchangeController.dispose();
     _newController.dispose();
     _borrowController.dispose();
+    _deliveryInstructionsController.dispose();
     super.dispose();
   }
 
@@ -1116,6 +1119,10 @@ class _OrderScreenState extends State<OrderScreen> {
                 : 'Customer',
             'address': _selectedAddress!.address,
             'address_id': _selectedAddress!.id,
+            'delivery_instructions':
+                _deliveryInstructionsController.text.trim().isEmpty
+                ? null
+                : _deliveryInstructionsController.text.trim(),
             'customer_lat': lat,
             'customer_lng': lng,
             // Keep existing columns in sync for compatibility in map views.
@@ -1371,6 +1378,29 @@ class _OrderScreenState extends State<OrderScreen> {
                             fontSize: 11,
                             color: Color(0xFF64748B),
                             height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _deliveryInstructionsController,
+                          minLines: 2,
+                          maxLines: 4,
+                          maxLength: 300,
+                          textCapitalization: TextCapitalization.sentences,
+                          textInputAction: TextInputAction.newline,
+                          decoration: InputDecoration(
+                            labelText: 'Delivery instructions (optional)',
+                            hintText:
+                                'Floor, unit, gate color, or nearby landmark',
+                            alignLabelWithHint: true,
+                            prefixIcon: const Icon(
+                              Icons.sticky_note_2_outlined,
+                            ),
+                            filled: true,
+                            fillColor: const Color(0xFFF8FAFC),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
                       ],

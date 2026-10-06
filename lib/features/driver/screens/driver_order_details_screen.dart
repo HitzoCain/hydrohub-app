@@ -972,6 +972,9 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
     return _textOf(_order?['address'], fallback: widget.address);
   }
 
+  String _resolvedDeliveryInstructions() =>
+      _textOf(_order?['delivery_instructions'], fallback: '').trim();
+
   int _resolvedTotalGallons() {
     return _toInt(_order?['gallons'], fallback: widget.totalGallons);
   }
@@ -1229,6 +1232,45 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
                   ],
                 ),
               ),
+              if (_resolvedDeliveryInstructions().isNotEmpty) ...[
+                const SizedBox(height: 14),
+                _SectionCard(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.sticky_note_2_outlined,
+                        color: Color(0xFFB45309),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Delivery Instructions',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              _resolvedDeliveryInstructions(),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                height: 1.4,
+                                color: Color(0xFF334155),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
               _SectionCard(
                 child: Column(
