@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 import 'package:aqua_in_laba_app/features/auth/services/logout_service.dart';
+import 'package:aqua_in_laba_app/widgets/share_app_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'driver_dashboard_screen.dart';
@@ -566,6 +567,18 @@ class _ActionsSection extends StatelessWidget {
             iconColor: Color(0xFF2563EB),
             title: 'Edit Profile',
             onTap: onEditProfile,
+          ),
+          const SizedBox(height: 8),
+          _ActionTile(
+            icon: Icons.qr_code_2_rounded,
+            iconColor: Color(0xFF2563EB),
+            title: 'Share App',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(builder: (_) => const ShareAppScreen()),
+              );
+            },
           ),
           const SizedBox(height: 8),
           _ActionTile(

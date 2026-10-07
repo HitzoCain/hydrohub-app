@@ -3,6 +3,7 @@ import 'package:aqua_in_laba_app/features/customer/screens/edit_profile_screen.d
 import 'package:aqua_in_laba_app/features/customer/screens/address_screen.dart';
 import 'package:aqua_in_laba_app/features/customer/screens/support_screen.dart';
 import 'package:aqua_in_laba_app/features/auth/services/logout_service.dart';
+import 'package:aqua_in_laba_app/widgets/share_app_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -379,6 +380,17 @@ class _AccountOptionsSection extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute<void>(builder: (_) => const AddressScreen()),
+              );
+            },
+          ),
+          const Divider(height: 1, color: Color(0xFFE2E8F0)),
+          _OptionTile(
+            icon: Icons.qr_code_2_rounded,
+            label: 'Share App',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(builder: (_) => const ShareAppScreen()),
               );
             },
           ),
