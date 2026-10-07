@@ -85,16 +85,6 @@ class ShareAppScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 20),
-              SelectableText(
-                downloadUrl,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 12,
-                  height: 1.4,
-                  color: Color(0xFF475569),
-                ),
-              ),
-              const SizedBox(height: 20),
               FilledButton.icon(
                 onPressed: () => _shareLink(context),
                 icon: const Icon(Icons.share_outlined),

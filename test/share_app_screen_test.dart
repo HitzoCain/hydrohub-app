@@ -9,7 +9,7 @@ void main() {
 
     expect(find.byType(QrImageView), findsOneWidget);
     expect(find.text('Scan to download the Android app'), findsOneWidget);
-    expect(find.text(ShareAppScreen.downloadUrl), findsOneWidget);
+    expect(find.text(ShareAppScreen.downloadUrl), findsNothing);
     expect(find.text('Share link'), findsOneWidget);
     expect(find.text('Copy link'), findsOneWidget);
   });
