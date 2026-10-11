@@ -38,7 +38,7 @@ class _OrderScreenState extends State<OrderScreen> {
   _Product? _selectedProduct;
   List<_SavedAddress> _savedAddresses = const [];
   _SavedAddress? _selectedAddress;
-  String _deliveryTime = 'Morning';
+  String _deliveryTime = '9:00 AM';
   String _deliveryType = 'now';
   String _paymentMethod = 'Cash';
   bool _loadingPaymentSettings = true;
@@ -642,15 +642,14 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   TimeOfDay _preferredTimeForSlot() {
-    switch (_deliveryTime) {
-      case 'Afternoon':
-        return const TimeOfDay(hour: 14, minute: 0);
-      case 'Evening':
-        return const TimeOfDay(hour: 18, minute: 0);
-      case 'Morning':
-      default:
-        return const TimeOfDay(hour: 9, minute: 0);
-    }
+    return _selectedTime ?? const TimeOfDay(hour: 9, minute: 0);
+  }
+
+  String _formatTimeOfDay(TimeOfDay time) {
+    final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
+    final minute = time.minute.toString().padLeft(2, '0');
+    final period = time.period == DayPeriod.am ? 'AM' : 'PM';
+    return '$hour:$minute $period';
   }
 
   Future<void> _pickPaymentReceipt() async {
@@ -1207,6 +1206,20 @@ class _OrderScreenState extends State<OrderScreen> {
     if (picked == null) return;
     setState(() {
       _selectedDate = picked;
+    });
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? const TimeOfDay(hour: 9, minute: 0),
+    );
+
+    if (picked == null) return;
+
+    setState(() {
+      _selectedTime = picked;
+      _deliveryTime = _formatTimeOfDay(picked);
     });
   }
 
@@ -1777,6 +1790,10 @@ class _OrderScreenState extends State<OrderScreen> {
                                   setState(() {
                                     _deliveryType = 'scheduled';
                                     _selectedTime ??= _preferredTimeForSlot();
+                                    _deliveryTime = _formatTimeOfDay(
+                                      _selectedTime ??
+                                          const TimeOfDay(hour: 9, minute: 0),
+                                    );
                                   });
                                 },
                               ),
@@ -1821,59 +1838,41 @@ class _OrderScreenState extends State<OrderScreen> {
                           ),
                           const SizedBox(height: 12),
                           Row(
-                            children: ['Morning', 'Afternoon', 'Evening'].map((
-                              slot,
-                            ) {
-                              final selected = _deliveryTime == slot;
-                              return Expanded(
-                                child: Padding(
-                                  padding: EdgeInsets.only(
-                                    right: slot != 'Evening' ? 8 : 0,
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _pickTime,
+                                  icon: const Icon(
+                                    Icons.access_time_rounded,
+                                    size: 16,
                                   ),
-                                  child: GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        _deliveryTime = slot;
-                                        _selectedTime = _preferredTimeForSlot();
-                                      });
-                                    },
-                                    child: AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 200,
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 10,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: selected
-                                            ? _primaryBlue
-                                            : const Color(0xFFF1F5F9),
-                                        borderRadius: BorderRadius.circular(10),
-                                        border: Border.all(
-                                          color: selected
-                                              ? _primaryBlue
-                                              : const Color(0xFFE2E8F0),
-                                          width: 0.5,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        slot,
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: selected
-                                              ? Colors.white
-                                              : const Color(0xFF475569),
-                                        ),
-                                      ),
+                                  label: Text(
+                                    _selectedTime == null
+                                        ? 'Select Time'
+                                        : _formatTimeOfDay(_selectedTime!),
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF334155),
+                                    side: const BorderSide(
+                                      color: Color(0xFFE2E8F0),
+                                      width: 0.8,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    minimumSize: const Size(0, 44),
+                                  ),
                                 ),
-                              );
-                            }).toList(),
+                              ),
+                            ],
                           ),
-                          if (_selectedDate != null) ...[
+                          if (_selectedDate != null &&
+                              _selectedTime != null) ...[
                             const SizedBox(height: 10),
                             Container(
                               width: double.infinity,
@@ -1883,7 +1882,7 @@ class _OrderScreenState extends State<OrderScreen> {
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text(
-                                'Scheduled on ${_formatDate(_selectedDate!)} at $_deliveryTime',
+                                'Scheduled on ${_formatDate(_selectedDate!)} at ${_formatTimeOfDay(_selectedTime!)}',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: Color(0xFF1D4ED8),
@@ -2279,17 +2278,19 @@ class _OrderScreenState extends State<OrderScreen> {
                         _SummaryRow(
                           label: 'Preferred Time',
                           value: _deliveryType == 'scheduled'
-                              ? _deliveryTime
+                              ? (_selectedTime != null
+                                    ? _formatTimeOfDay(_selectedTime!)
+                                    : _deliveryTime)
                               : 'Any time',
                         ),
                         if (_deliveryType == 'scheduled' &&
                             _selectedDate != null &&
-                            _deliveryTime.isNotEmpty) ...[
+                            _selectedTime != null) ...[
                           const _SummaryDivider(),
                           _SummaryRow(
                             label: 'Scheduled For',
                             value:
-                                '${_formatDate(_selectedDate!)} $_deliveryTime',
+                                '${_formatDate(_selectedDate!)} ${_formatTimeOfDay(_selectedTime!)}',
                           ),
                         ],
                         const SizedBox(height: 10),

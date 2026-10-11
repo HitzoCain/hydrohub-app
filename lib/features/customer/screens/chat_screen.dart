@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:aqua_in_laba_app/features/chat/widgets/chat_message_actions.dart';
 
 // Note: the project does not have a local `supabase_service.dart` helper.
 // Use `Supabase.instance.client` directly instead of importing a missing file.
@@ -347,6 +348,104 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() {
           _sending = false;
         });
+      }
+    }
+  }
+
+  Future<void> _handleMessageLongPress(Map<String, dynamic> message) async {
+    final actorId = Supabase.instance.client.auth.currentUser?.id;
+    if (actorId == null) return;
+
+    final action = await showChatMessageActions(
+      context,
+      canEdit: _canEditMessage(message, actorId),
+      selectedReaction: parseChatReactions(message['reactions'])[actorId],
+    );
+    if (!mounted || action == null) return;
+
+    if (action.edit) {
+      await _editMessage(message, actorId);
+    } else {
+      await _setMessageReaction(message, actorId, action.reaction);
+    }
+  }
+
+  bool _canEditMessage(Map<String, dynamic> message, String actorId) {
+    return message['sender_type']?.toString().toLowerCase() == 'customer' &&
+        message['sender_id']?.toString() == actorId;
+  }
+
+  Future<void> _editMessage(
+    Map<String, dynamic> message,
+    String actorId,
+  ) async {
+    final editedText = await showEditChatMessageDialog(
+      context,
+      initialText: message['message']?.toString() ?? '',
+    );
+    if (!mounted || editedText == null || editedText.isEmpty) return;
+    if (editedText == message['message']?.toString()) return;
+
+    try {
+      final updated = await Supabase.instance.client
+          .from('messages')
+          .update({
+            'message': editedText,
+            'edited_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', message['id'])
+          .eq('sender_type', 'customer')
+          .eq('sender_id', actorId)
+          .select('id');
+      if (updated.isEmpty) throw StateError('Message could not be edited.');
+
+      if (_messages.isNotEmpty && _messages.last['id'] == message['id']) {
+        try {
+          await Supabase.instance.client
+              .from('conversations')
+              .update({'last_message': editedText})
+              .eq('id', widget.conversationId);
+        } catch (error) {
+          debugPrint('Failed to update customer chat preview: $error');
+        }
+      }
+      await _loadMessages();
+    } catch (error) {
+      debugPrint('Failed to edit customer message: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to edit this message.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _setMessageReaction(
+    Map<String, dynamic> message,
+    String actorId,
+    String? reaction,
+  ) async {
+    try {
+      final reactions = parseChatReactions(message['reactions']);
+      if (reaction == null) {
+        reactions.remove(actorId);
+      } else {
+        reactions[actorId] = reaction;
+      }
+
+      final updated = await Supabase.instance.client
+          .from('messages')
+          .update({'reactions': reactions})
+          .eq('id', message['id'])
+          .select('id');
+      if (updated.isEmpty) throw StateError('Reaction could not be saved.');
+      await _loadMessages();
+    } catch (error) {
+      debugPrint('Failed to react to customer chat message: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to save reaction.')),
+        );
       }
     }
   }
@@ -996,6 +1095,10 @@ class _ChatScreenState extends State<ChatScreen> {
           senderIconColor: _getSenderIconColor(message),
           isMine: _isMyMessage(message),
           timestamp: _formatMessageTime(message['created_at']),
+          onLongPress: () => _handleMessageLongPress(message),
+          reactions: parseChatReactions(message['reactions']),
+          actorId: Supabase.instance.client.auth.currentUser?.id ?? '',
+          isEdited: message['edited_at'] != null,
         );
       },
     );
@@ -1304,6 +1407,10 @@ class _MessageBubble extends StatelessWidget {
     required this.senderIconColor,
     required this.isMine,
     required this.timestamp,
+    required this.onLongPress,
+    required this.reactions,
+    required this.actorId,
+    required this.isEdited,
   });
 
   final Map<String, dynamic> message;
@@ -1319,14 +1426,18 @@ class _MessageBubble extends StatelessWidget {
   final bool isMine;
 
   final String timestamp;
+  final VoidCallback onLongPress;
+  final Map<String, String> reactions;
+  final String actorId;
+  final bool isEdited;
 
   @override
   Widget build(BuildContext context) {
-    if (isMine) {
-      return _buildMyMessage(context);
-    }
-
-    return _buildIncomingMessage(context);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: onLongPress,
+      child: isMine ? _buildMyMessage(context) : _buildIncomingMessage(context),
+    );
   }
 
   // ============================================================
@@ -1389,8 +1500,14 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (isEdited)
+                  const Text(
+                    ' · edited',
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
+                  ),
               ],
             ),
+            ChatReactionBadges(reactions: reactions, actorId: actorId),
           ],
         ),
       ),
@@ -1507,15 +1624,27 @@ class _MessageBubble extends StatelessWidget {
 
             const SizedBox(height: 4),
 
-            if (timestamp.isNotEmpty)
-              Text(
-                timestamp,
-                style: const TextStyle(
-                  color: Color(0xFF94A3B8),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500,
-                ),
+            if (timestamp.isNotEmpty || isEdited)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (timestamp.isNotEmpty)
+                    Text(
+                      timestamp,
+                      style: const TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  if (isEdited)
+                    const Text(
+                      ' · edited',
+                      style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
+                    ),
+                ],
               ),
+            ChatReactionBadges(reactions: reactions, actorId: actorId),
           ],
         ),
       ),

@@ -3,22 +3,27 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:aqua_in_laba_app/features/chat/widgets/chat_message_actions.dart';
 
 class DriverChatScreen extends StatefulWidget {
   const DriverChatScreen({
     super.key,
+    this.customerId = '',
     required this.customerName,
     required this.orderId,
     required this.status,
     required this.conversationId,
     required this.driverId,
+    this.customerAvatarUrl = '',
 
     // Station Contact Center support
     this.isStationContactCenter = false,
     this.stationName = 'Aqua In Lavada',
   });
 
+  final String customerId;
   final String customerName;
+  final String customerAvatarUrl;
   final String orderId;
   final String status;
   final String conversationId;
@@ -43,7 +48,7 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
   static const Color _stationOrange = Color(0xFFF97316);
   static const Color _stationLight = Color(0xFFFFF7ED);
 
-  final SupabaseClient _supabase = Supabase.instance.client;
+  SupabaseClient get _supabase => Supabase.instance.client;
 
   final TextEditingController _messageController = TextEditingController();
 
@@ -55,6 +60,8 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
   bool _sending = false;
 
   String _customerPhone = '';
+  String _customerProfileName = '';
+  String _customerProfileAvatarUrl = '';
 
   String _productInfo = '';
 
@@ -67,7 +74,10 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
       return widget.stationName;
     }
 
-    return widget.customerName;
+    return (_customerProfileName.trim().isNotEmpty
+            ? _customerProfileName
+            : widget.customerName)
+        .trim();
   }
 
   String get _chatSubtitle {
@@ -82,6 +92,7 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
   void initState() {
     super.initState();
 
+    _loadCustomerProfile();
     _loadMessages();
 
     // Auto refresh every 3 seconds.
@@ -148,6 +159,96 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
     }
   }
 
+  Future<void> _handleMessageLongPress(_ChatMessage message) async {
+    final actorId = widget.driverId.trim();
+    if (actorId.isEmpty) return;
+
+    final action = await showChatMessageActions(
+      context,
+      canEdit: message.senderType == 'driver' && message.senderId == actorId,
+      selectedReaction: message.reactions[actorId],
+    );
+    if (!mounted || action == null) return;
+
+    if (action.edit) {
+      await _editMessage(message, actorId);
+    } else {
+      await _setMessageReaction(message, actorId, action.reaction);
+    }
+  }
+
+  Future<void> _editMessage(_ChatMessage message, String actorId) async {
+    final editedText = await showEditChatMessageDialog(
+      context,
+      initialText: message.message,
+    );
+    if (!mounted || editedText == null || editedText.isEmpty) return;
+    if (editedText == message.message) return;
+
+    try {
+      final updated = await _supabase
+          .from('messages')
+          .update({
+            'message': editedText,
+            'edited_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', message.id)
+          .eq('sender_type', 'driver')
+          .eq('sender_id', actorId)
+          .select('id');
+      if (updated.isEmpty) throw StateError('Message could not be edited.');
+
+      if (_messages.isNotEmpty && _messages.last.id == message.id) {
+        try {
+          await _supabase
+              .from('conversations')
+              .update({'last_message': editedText})
+              .eq('id', widget.conversationId);
+        } catch (error) {
+          debugPrint('Failed to update driver chat preview: $error');
+        }
+      }
+      await _loadMessages();
+    } catch (error) {
+      debugPrint('Failed to edit driver message: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to edit this message.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _setMessageReaction(
+    _ChatMessage message,
+    String actorId,
+    String? reaction,
+  ) async {
+    try {
+      final reactions = Map<String, String>.from(message.reactions);
+      if (reaction == null) {
+        reactions.remove(actorId);
+      } else {
+        reactions[actorId] = reaction;
+      }
+
+      final updated = await _supabase
+          .from('messages')
+          .update({'reactions': reactions})
+          .eq('id', message.id)
+          .select('id');
+      if (updated.isEmpty) throw StateError('Reaction could not be saved.');
+      await _loadMessages();
+    } catch (error) {
+      debugPrint('Failed to react to driver chat message: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to save reaction.')),
+        );
+      }
+    }
+  }
+
   Future<void> _markIncomingMessagesRead() async {
     try {
       await _supabase
@@ -158,6 +259,49 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
           .eq('is_read', false);
     } catch (error) {
       debugPrint('Failed to mark driver chat messages as read: $error');
+    }
+  }
+
+  Future<void> _loadCustomerProfile() async {
+    if (_isStationChat) {
+      _customerProfileAvatarUrl = '';
+      _customerProfileName = '';
+      return;
+    }
+
+    final customerId = widget.customerId.trim();
+    final initialAvatar = widget.customerAvatarUrl.trim();
+
+    if (initialAvatar.isNotEmpty) {
+      _customerProfileAvatarUrl = initialAvatar;
+    }
+
+    if (customerId.isEmpty) {
+      return;
+    }
+
+    try {
+      final profile = await _supabase
+          .from('customer_profiles')
+          .select('name, avatar_url')
+          .eq('user_id', customerId)
+          .maybeSingle();
+
+      if (!mounted || profile == null) {
+        return;
+      }
+
+      final profileName = profile['name']?.toString().trim() ?? '';
+      final profileAvatarUrl = profile['avatar_url']?.toString().trim() ?? '';
+
+      setState(() {
+        _customerProfileName = profileName;
+        _customerProfileAvatarUrl = profileAvatarUrl.isNotEmpty
+            ? profileAvatarUrl
+            : _customerProfileAvatarUrl;
+      });
+    } catch (error) {
+      debugPrint('Failed to load customer profile: $error');
     }
   }
 
@@ -325,7 +469,7 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
         return 'You';
 
       case 'customer':
-        return widget.customerName;
+        return _chatName;
 
       default:
         return 'Unknown';
@@ -338,6 +482,10 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final String customerAvatarUrl = _customerProfileAvatarUrl.trim().isNotEmpty
+        ? _customerProfileAvatarUrl.trim()
+        : widget.customerAvatarUrl.trim();
+
     return Scaffold(
       backgroundColor: _background,
 
@@ -367,6 +515,7 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
                       : const Color(0xFFDBEAFE),
                 ),
               ),
+              clipBehavior: Clip.antiAlias,
               alignment: Alignment.center,
 
               child: _isStationChat
@@ -375,14 +524,29 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
                       color: _stationOrange,
                       size: 21,
                     )
-                  : Text(
-                      widget.customerName.isNotEmpty
-                          ? widget.customerName.substring(0, 1).toUpperCase()
+                  : customerAvatarUrl.isEmpty
+                  ? Text(
+                      _chatName.isNotEmpty
+                          ? _chatName.substring(0, 1).toUpperCase()
                           : '?',
                       style: const TextStyle(
                         color: _primaryBlue,
                         fontWeight: FontWeight.w700,
                         fontSize: 16,
+                      ),
+                    )
+                  : Image.network(
+                      customerAvatarUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Text(
+                        _chatName.isNotEmpty
+                            ? _chatName.substring(0, 1).toUpperCase()
+                            : '?',
+                        style: const TextStyle(
+                          color: _primaryBlue,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
                       ),
                     ),
             ),
@@ -625,11 +789,14 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
 
                           timeLabel: _formatTime(message.createdAt),
 
-                          customerName: widget.customerName,
+                          customerName: _chatName,
+                          customerAvatarUrl: customerAvatarUrl,
 
                           stationName: widget.stationName,
 
                           isStationChat: _isStationChat,
+                          onLongPress: () => _handleMessageLongPress(message),
+                          actorId: widget.driverId,
                         );
                       },
                     ),
@@ -736,6 +903,8 @@ class _ChatMessage {
     required this.message,
     required this.isRead,
     required this.createdAt,
+    required this.editedAt,
+    required this.reactions,
   });
 
   final String id;
@@ -744,6 +913,8 @@ class _ChatMessage {
   final String message;
   final bool isRead;
   final DateTime createdAt;
+  final String? editedAt;
+  final Map<String, String> reactions;
 
   factory _ChatMessage.fromMap(Map<String, dynamic> map) {
     return _ChatMessage(
@@ -755,6 +926,8 @@ class _ChatMessage {
       createdAt:
           DateTime.tryParse(map['created_at']?.toString() ?? '') ??
           DateTime.now(),
+      editedAt: map['edited_at']?.toString(),
+      reactions: parseChatReactions(map['reactions']),
     );
   }
 }
@@ -769,16 +942,22 @@ class _MessageBubble extends StatelessWidget {
     required this.senderName,
     required this.timeLabel,
     required this.customerName,
+    required this.customerAvatarUrl,
     required this.stationName,
     required this.isStationChat,
+    required this.onLongPress,
+    required this.actorId,
   });
 
   final _ChatMessage message;
   final String senderName;
   final String timeLabel;
   final String customerName;
+  final String customerAvatarUrl;
   final String stationName;
   final bool isStationChat;
+  final VoidCallback onLongPress;
+  final String actorId;
 
   @override
   Widget build(BuildContext context) {
@@ -872,20 +1051,37 @@ class _MessageBubble extends StatelessWidget {
           color: Color(0xFFEFF4FF),
           shape: BoxShape.circle,
         ),
+        clipBehavior: Clip.antiAlias,
 
         alignment: Alignment.center,
 
-        child: Text(
-          customerName.isNotEmpty
-              ? customerName.substring(0, 1).toUpperCase()
-              : '?',
+        child: customerAvatarUrl.trim().isEmpty
+            ? Text(
+                customerName.isNotEmpty
+                    ? customerName.substring(0, 1).toUpperCase()
+                    : '?',
 
-          style: const TextStyle(
-            color: Color(0xFF2563EB),
-            fontWeight: FontWeight.w700,
-            fontSize: 13,
-          ),
-        ),
+                style: const TextStyle(
+                  color: Color(0xFF2563EB),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              )
+            : Image.network(
+                customerAvatarUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Text(
+                  customerName.isNotEmpty
+                      ? customerName.substring(0, 1).toUpperCase()
+                      : '?',
+
+                  style: const TextStyle(
+                    color: Color(0xFF2563EB),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
       );
     } else {
       avatar = const SizedBox(width: 34, height: 34);
@@ -939,39 +1135,37 @@ class _MessageBubble extends StatelessWidget {
                     // ==================================================
                     // MESSAGE
                     // ==================================================
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-
-                      decoration: BoxDecoration(
-                        color: bubbleColor,
-
-                        borderRadius: borderRadius,
-
-                        border: isAdmin
-                            ? Border.all(color: const Color(0xFFFED7AA))
-                            : null,
-
-                        boxShadow: isDriver
-                            ? const []
-                            : const [
-                                BoxShadow(
-                                  color: Color(0x0A000000),
-                                  blurRadius: 5,
-                                  offset: Offset(0, 2),
-                                ),
-                              ],
-                      ),
-
-                      child: Text(
-                        message.message,
-
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 14,
-                          height: 1.3,
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onLongPress: onLongPress,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: bubbleColor,
+                          borderRadius: borderRadius,
+                          border: isAdmin
+                              ? Border.all(color: const Color(0xFFFED7AA))
+                              : null,
+                          boxShadow: isDriver
+                              ? const []
+                              : const [
+                                  BoxShadow(
+                                    color: Color(0x0A000000),
+                                    blurRadius: 5,
+                                    offset: Offset(0, 2),
+                                  ),
+                                ],
+                        ),
+                        child: Text(
+                          message.message,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 14,
+                            height: 1.3,
+                          ),
                         ),
                       ),
                     ),
@@ -981,18 +1175,33 @@ class _MessageBubble extends StatelessWidget {
                     // ==================================================
                     // TIME
                     // ==================================================
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-
-                      child: Text(
-                        timeLabel,
-
-                        style: const TextStyle(
-                          color: Color(0xFF94A3B8),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Text(
+                            timeLabel,
+                            style: const TextStyle(
+                              color: Color(0xFF94A3B8),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
                         ),
-                      ),
+                        if (message.editedAt != null)
+                          const Text(
+                            ' · edited',
+                            style: TextStyle(
+                              color: Color(0xFF94A3B8),
+                              fontSize: 10,
+                            ),
+                          ),
+                      ],
+                    ),
+                    ChatReactionBadges(
+                      reactions: message.reactions,
+                      actorId: actorId,
                     ),
                   ],
                 ),

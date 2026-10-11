@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:lottie/lottie.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/customer_profile_completion_screen.dart';
 import 'package:aqua_in_laba_app/features/auth/screens/login_screen.dart';
@@ -10,19 +12,21 @@ import 'package:aqua_in_laba_app/features/customer/screens/customer_nav_shell.da
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 import 'package:aqua_in_laba_app/services/app_update_service.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Supabase.initialize(
+  final supabaseReady = Supabase.initialize(
     url: 'https://cnkxnwdzvamruxefmzvq.supabase.co',
     anonKey: 'sb_publishable_bJKWR5p2qC97h3OJSec6Iw_ErFkrwuF',
-  );
+  ).then<void>((_) {});
 
-  runApp(const AquaEnLavadaApp());
+  runApp(AquaEnLavadaApp(supabaseReady: supabaseReady));
 }
 
 class AquaEnLavadaApp extends StatelessWidget {
-  const AquaEnLavadaApp({super.key});
+  const AquaEnLavadaApp({super.key, this.supabaseReady});
+
+  final Future<void>? supabaseReady;
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +42,179 @@ class AquaEnLavadaApp extends StatelessWidget {
           surface: const Color(0xFFF6F8FB),
         ),
       ),
-      home: const _AuthGate(),
+      home: _LaunchSequenceScreen(
+        supabaseReady: supabaseReady ?? Future<void>.value(),
+      ),
+    );
+  }
+}
+
+class _LaunchSequenceScreen extends StatefulWidget {
+  const _LaunchSequenceScreen({required this.supabaseReady});
+
+  final Future<void> supabaseReady;
+
+  @override
+  State<_LaunchSequenceScreen> createState() => _LaunchSequenceScreenState();
+}
+
+class _LaunchSequenceScreenState extends State<_LaunchSequenceScreen> {
+  static const Duration _sceneDuration = Duration(milliseconds: 2200);
+
+  late final Timer _timer;
+  late final Timer _handoffTimer;
+  int _phase = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(_sceneDuration, (_) {
+      if (!mounted) return;
+      if (_phase < 2) {
+        setState(() => _phase++);
+      } else {
+        _timer.cancel();
+      }
+    });
+
+    _handoffTimer = Timer(const Duration(milliseconds: 7000), () async {
+      await widget.supabaseReady;
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 550),
+          pageBuilder: (_, __, ___) => const _AuthGate(),
+          transitionsBuilder: (_, animation, __, child) => SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.08, 0),
+              end: Offset.zero,
+            ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation),
+            child: FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOutCubic,
+              ),
+              child: child,
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    _handoffTimer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scene = switch (_phase) {
+      0 => const _LaunchScene(
+        animationAsset: 'assets/animations/water_drop.json',
+        title: 'Pure water',
+        subtitle: 'Fresh hydration for every drop',
+      ),
+      1 => const _LaunchScene(
+        animationAsset: 'assets/animations/delivery_bike.json',
+        title: 'Fast delivery',
+        subtitle: 'Drivers on the road to your home',
+      ),
+      _ => const _LaunchScene(
+        animationAsset: 'assets/animations/map_route.json',
+        title: 'Track live',
+        subtitle: 'See your order move in real time',
+      ),
+    };
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F8FB),
+      body: SafeArea(
+        child: Center(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 500),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.08),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            ),
+            child: SizedBox(
+              key: ValueKey<int>(_phase),
+              width: 260,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  scene,
+                  const SizedBox(height: 18),
+                  const Text(
+                    'Aqua en Lavada',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LaunchScene extends StatelessWidget {
+  const _LaunchScene({
+    required this.animationAsset,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final String animationAsset;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 260,
+          height: 260,
+          child: Lottie.asset(
+            animationAsset,
+            fit: BoxFit.contain,
+            repeat: true,
+          ),
+        ),
+        const SizedBox(height: 22),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF0F172A),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          subtitle,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+        ),
+      ],
     );
   }
 }

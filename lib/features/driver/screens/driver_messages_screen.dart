@@ -303,6 +303,7 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
         conversations.add(
           ConversationData(
             conversationId: conversationId,
+            customerId: customerId,
             customerName: customerName,
             avatarUrl: customerAvatarUrls[customerId] ?? '',
             customerPhone: customerPhone,
@@ -663,7 +664,9 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
         builder: (_) => DriverChatScreen(
           conversationId: conversation.conversationId,
 
+          customerId: conversation.customerId,
           customerName: conversation.customerName,
+          customerAvatarUrl: conversation.avatarUrl ?? '',
 
           orderId: conversation.orderId,
 
@@ -688,6 +691,7 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
         builder: (_) => DriverChatScreen(
           conversationId: conversation.conversationId,
 
+          customerId: '',
           customerName: 'Aqua In Lavada',
 
           orderId: '',
@@ -1693,6 +1697,7 @@ class ActiveDeliveryData {
 class ConversationData {
   const ConversationData({
     required this.conversationId,
+    this.customerId = '',
     required this.customerName,
     this.avatarUrl = '',
     this.customerPhone = '',
@@ -1707,6 +1712,8 @@ class ConversationData {
   });
 
   final String conversationId;
+
+  final String customerId;
 
   final String customerName;
 
