@@ -1159,6 +1159,9 @@ class _RecentOrderTile extends StatelessWidget {
   final String avatarUrl;
 
   String _orderLabel() {
+    final sessionName = CustomerSession.name?.trim() ?? '';
+    if (sessionName.isNotEmpty) return sessionName;
+
     final customerName = (order['customer_name'] ?? order['name'] ?? 'Customer')
         .toString()
         .trim();

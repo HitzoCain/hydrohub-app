@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:aqua_in_laba_app/services/customer_profile_service.dart';
 
 import '../driver_session.dart';
 import 'driver_dashboard_screen.dart';
@@ -222,6 +223,9 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
           .where((customerId) => customerId.isNotEmpty)
           .toSet();
       final customerAvatarUrls = await _fetchCustomerAvatarUrls(customerIds);
+      final customerNames = await CustomerProfileService.fetchNames(
+        customerIds,
+      );
 
       final List<ConversationData> conversations = [];
 
@@ -269,13 +273,17 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
 
         final String orderId = '${conversation['order_id'] ?? ''}';
 
-        final String customerName = '${order['customer_name'] ?? 'Customer'}';
-
         final customerId =
             (conversation['customer_id'] ?? order['customer_id'])
                 ?.toString()
                 .trim() ??
             '';
+
+        final String customerName = CustomerProfileService.resolveName(
+          customerNames,
+          customerId,
+          order['customer_name'],
+        );
 
         final String customerPhone = '${order['customer_phone'] ?? ''}'.trim();
 
@@ -383,6 +391,7 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
           .from('orders')
           .select('''
                 id,
+                customer_id,
                 customer_name,
                 driver_id,
                 status,
@@ -404,6 +413,14 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
           .order('created_at', ascending: false);
 
       final List<dynamic> activeRows = activeResponse as List<dynamic>;
+      final activeCustomerIds = activeRows
+          .whereType<Map<String, dynamic>>()
+          .map((row) => row['customer_id']?.toString().trim() ?? '')
+          .where((customerId) => customerId.isNotEmpty)
+          .toSet();
+      final activeCustomerNames = await CustomerProfileService.fetchNames(
+        activeCustomerIds,
+      );
 
       final List<ActiveDeliveryData> activeDeliveries = activeRows.map((row) {
         final Map<String, dynamic> order = Map<String, dynamic>.from(row);
@@ -411,6 +428,7 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
         final String orderStatus = _normalizeOrderStatus(order['status']);
 
         final String orderId = '${order['id']}';
+        final String customerId = order['customer_id']?.toString().trim() ?? '';
         String conversationId = '';
         String avatarUrl = '';
         for (final conversation in conversations) {
@@ -423,7 +441,11 @@ class _DriverMessagesScreenState extends State<DriverMessagesScreen> {
         }
 
         return ActiveDeliveryData(
-          customerName: '${order['customer_name'] ?? 'Customer'}',
+          customerName: CustomerProfileService.resolveName(
+            activeCustomerNames,
+            customerId,
+            order['customer_name'],
+          ),
           avatarUrl: avatarUrl,
           orderId: orderId,
           conversationId: conversationId,

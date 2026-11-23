@@ -3,6 +3,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
 import 'package:aqua_in_laba_app/features/driver/services/driver_location_service.dart';
+import 'package:aqua_in_laba_app/services/customer_profile_service.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -195,28 +196,19 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         .toSet()
         .toList();
     final customerAvatarUrls = <String, String>{};
+    final customerNames = <String, String>{};
     if (customerIds.isNotEmpty) {
       try {
-        final profiles = await Supabase.instance.client
-            .from('customer_profiles')
-            .select('user_id, avatar_url')
-            .inFilter('user_id', customerIds);
-        for (final profile in profiles.whereType<Map<String, dynamic>>()) {
-          final userId = profile['user_id']?.toString().trim() ?? '';
-          final avatarUrl = profile['avatar_url']?.toString().trim() ?? '';
-          if (userId.isNotEmpty && avatarUrl.isNotEmpty) {
-            customerAvatarUrls[userId] = avatarUrl;
-          }
+        final profiles = await CustomerProfileService.fetchProfiles(
+          customerIds,
+        );
+        for (final entry in profiles.entries) {
+          customerNames[entry.key] = entry.value['name'] ?? '';
+          customerAvatarUrls[entry.key] = entry.value['avatarUrl'] ?? '';
         }
       } catch (error) {
         debugPrint('Failed to load active delivery customer photos: $error');
       }
-    }
-
-    String textOf(dynamic value, {required String fallback}) {
-      final text = value?.toString().trim();
-      if (text == null || text.isEmpty) return fallback;
-      return text;
     }
 
     String statusOf(dynamic value) {
@@ -233,7 +225,11 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     }
 
     return activeOrders.whereType<Map<String, dynamic>>().map((order) {
-      final customerName = textOf(order['customer_name'], fallback: 'Customer');
+      final customerName = CustomerProfileService.resolveName(
+        customerNames,
+        order['customer_id'],
+        order['customer_name'],
+      );
       final createdAt = DateTime.tryParse(
         order['created_at']?.toString() ?? '',
       );

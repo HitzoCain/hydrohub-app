@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
+import 'package:aqua_in_laba_app/services/customer_profile_service.dart';
 
 import 'driver_dashboard_screen.dart';
 import 'driver_map_screen.dart';
@@ -230,6 +231,14 @@ class _DriverOrderDetailsScreenState extends State<DriverOrderDetailsScreen> {
       }
 
       final orderData = Map<String, dynamic>.from(response);
+      final customerId = orderData['customer_id']?.toString().trim() ?? '';
+      if (customerId.isNotEmpty) {
+        final names = await CustomerProfileService.fetchNames([customerId]);
+        final resolvedName = names[customerId]?.trim() ?? '';
+        if (resolvedName.isNotEmpty) {
+          orderData['customer_name'] = resolvedName;
+        }
+      }
 
       // Compatibility for older orders. Never infer an exchange return
       // for a Borrow Container order.

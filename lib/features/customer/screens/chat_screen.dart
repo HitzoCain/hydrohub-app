@@ -208,13 +208,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _markIncomingMessagesRead() async {
     if (_conversation == null) return;
 
-    final conversationType = _conversation?['conversation_type']
-        ?.toString()
-        .toLowerCase();
-    final senderType = conversationType == 'support' ? 'admin' : 'driver';
     final hasUnreadIncoming = _messages.any(
       (message) =>
-          message['sender_type']?.toString().toLowerCase() == senderType &&
+          message['sender_type']?.toString().toLowerCase() != 'customer' &&
           message['is_read'] == false,
     );
     if (!hasUnreadIncoming) return;
@@ -224,10 +220,24 @@ class _ChatScreenState extends State<ChatScreen> {
           .from('messages')
           .update({'is_read': true})
           .eq('conversation_id', widget.conversationId)
-          .eq('sender_type', senderType)
+          .neq('sender_type', 'customer')
           .eq('is_read', false)
           .select('id');
-      if (updatedMessages.isNotEmpty) return;
+      if (updatedMessages.isNotEmpty) {
+        if (!mounted) return;
+        setState(() {
+          for (final message in _messages) {
+            if (message['sender_type']?.toString().toLowerCase() ==
+                'customer') {
+              continue;
+            }
+            if (message['is_read'] == false) {
+              message['is_read'] = true;
+            }
+          }
+        });
+        return;
+      }
     } catch (error) {
       debugPrint('Direct read update failed, trying secure RPC: $error');
     }

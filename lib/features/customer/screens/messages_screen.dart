@@ -303,9 +303,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
               continue;
             }
 
-            // Customer only needs to see unread messages
-            // coming from driver or admin.
-            if (senderType != 'driver' && senderType != 'admin') {
+            // Anything not sent by the customer is incoming.
+            // This covers driver, admin, and older rows with role names.
+            if (senderType == 'customer') {
               continue;
             }
 
@@ -567,13 +567,47 @@ class _MessagesScreenState extends State<MessagesScreen> {
       return;
     }
 
+    setState(() {
+      _conversations = _conversations.map((item) {
+        if (item.id != conversation.id) return item;
+        return ConversationData(
+          id: item.id,
+          orderId: item.orderId,
+          name: item.name,
+          phone: item.phone,
+          avatarUrl: item.avatarUrl,
+          lastMessage: item.lastMessage,
+          orderInfo: item.orderInfo,
+          timeAgo: item.timeAgo,
+          unreadCount: 0,
+          type: item.type,
+          status: item.status,
+          lastMessageAt: item.lastMessageAt,
+          deliveryStatus: item.deliveryStatus,
+        );
+      }).toList();
+
+      _contacts = _contacts.map((item) {
+        if (item.conversationId != conversation.id) return item;
+        return ContactData(
+          name: item.name,
+          phone: item.phone,
+          avatarUrl: item.avatarUrl,
+          orderInfo: item.orderInfo,
+          type: item.type,
+          unreadCount: 0,
+          conversationId: item.conversationId,
+        );
+      }).toList();
+    });
+
     Navigator.push(
       context,
       MaterialPageRoute<void>(
         builder: (_) => ChatScreen(conversationId: conversation.id),
       ),
-    ).then((_) {
-      _refreshConversations();
+    ).then((_) async {
+      await _loadConversations();
     });
   }
 

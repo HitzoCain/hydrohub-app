@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:aqua_in_laba_app/features/driver/driver_session.dart';
+import 'package:aqua_in_laba_app/services/customer_profile_service.dart';
 
 import 'driver_dashboard_screen.dart';
 import 'driver_map_screen.dart';
@@ -70,12 +71,16 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
 
     final orderRows = orders.whereType<Map<String, dynamic>>().toList();
     final avatarUrls = await _fetchCustomerAvatarUrls(orderRows);
+    final customerNames = await CustomerProfileService.fetchNames(
+      orderRows.map((order) => '${order['customer_id'] ?? ''}'),
+    );
 
     return orderRows
         .map(
           (order) => _mapActiveOrder(
             order,
             avatarUrl: avatarUrls[order['customer_id']?.toString() ?? ''] ?? '',
+            customerNames: customerNames,
           ),
         )
         .toList();
@@ -104,12 +109,16 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
 
     final orderRows = orders.whereType<Map<String, dynamic>>().toList();
     final avatarUrls = await _fetchCustomerAvatarUrls(orderRows);
+    final customerNames = await CustomerProfileService.fetchNames(
+      orderRows.map((order) => '${order['customer_id'] ?? ''}'),
+    );
 
     return orderRows
         .map(
           (order) => _mapCompletedOrder(
             order,
             avatarUrl: avatarUrls[order['customer_id']?.toString() ?? ''] ?? '',
+            customerNames: customerNames,
           ),
         )
         .toList();
@@ -171,6 +180,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
   _DeliveryItemData _mapActiveOrder(
     Map<String, dynamic> order, {
     required String avatarUrl,
+    Map<String, String> customerNames = const {},
   }) {
     String textOf(dynamic value, {required String fallback}) {
       final text = value?.toString().trim();
@@ -210,7 +220,11 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
     }
 
     final orderId = textOf(order['id'], fallback: 'Unknown');
-    final customerName = textOf(order['customer_name'], fallback: 'Customer');
+    final customerName = CustomerProfileService.resolveName(
+      customerNames,
+      order['customer_id'],
+      order['customer_name'],
+    );
     final address = displayAddressOf(order);
     final gallons = gallonsOf(order['gallons']);
     final rawStatus = textOf(
@@ -238,6 +252,7 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
   _DeliveryItemData _mapCompletedOrder(
     Map<String, dynamic> order, {
     required String avatarUrl,
+    Map<String, String> customerNames = const {},
   }) {
     String textOf(dynamic value, {required String fallback}) {
       final text = value?.toString().trim();
@@ -277,7 +292,11 @@ class _DriverOrdersScreenState extends State<DriverOrdersScreen> {
     }
 
     final orderId = textOf(order['id'], fallback: 'Unknown');
-    final customerName = textOf(order['customer_name'], fallback: 'Customer');
+    final customerName = CustomerProfileService.resolveName(
+      customerNames,
+      order['customer_id'],
+      order['customer_name'],
+    );
     final address = displayAddressOf(order);
     final gallons = gallonsOf(order['gallons']);
     final deliveredDate = _formatDate(

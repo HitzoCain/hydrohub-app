@@ -6,6 +6,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:aqua_in_laba_app/services/customer_profile_service.dart';
 
 import 'driver_dashboard_screen.dart';
 import 'driver_order_details_screen.dart';
@@ -173,6 +174,9 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
 
     final orders = response.whereType<Map<String, dynamic>>().toList();
     final customerAvatarUrls = await _fetchCustomerAvatarUrls(orders);
+    final customerNames = await CustomerProfileService.fetchNames(
+      orders.map((order) => '${order['customer_id'] ?? ''}'),
+    );
     final deliveries = <DeliveryLocationData>[];
 
     for (final order in orders) {
@@ -180,6 +184,7 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
       final delivery = await _mapOrderToDelivery(
         order,
         avatarUrl: customerAvatarUrls[customerId] ?? '',
+        customerNames: customerNames,
       );
       if (delivery != null) {
         deliveries.add(delivery);
@@ -222,6 +227,7 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
   Future<DeliveryLocationData?> _mapOrderToDelivery(
     Map<String, dynamic> order, {
     required String avatarUrl,
+    Map<String, String> customerNames = const {},
   }) async {
     final coordinates = await _resolveCustomerLocation(order);
     if (coordinates == null) {
@@ -231,7 +237,11 @@ class _DriverMapScreenState extends State<DriverMapScreen> {
     final status = _deliveryStatusFromOrder(order['status']);
 
     return DeliveryLocationData(
-      customerName: _textOf(order['customer_name'], fallback: 'Customer'),
+      customerName: CustomerProfileService.resolveName(
+        customerNames,
+        order['customer_id'],
+        order['customer_name'],
+      ),
       orderId: _orderLabel(order['id']),
       avatarUrl: avatarUrl,
       address: _resolvedAddress(order),

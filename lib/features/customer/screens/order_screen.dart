@@ -1090,6 +1090,22 @@ class _OrderScreenState extends State<OrderScreen> {
         return;
       }
 
+      String customerName = 'Customer';
+      try {
+        final profile = await supabase
+            .from('customer_profiles')
+            .select('name')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        customerName = profile?['name']?.toString().trim().isNotEmpty == true
+            ? profile!['name'].toString().trim()
+            : (user.userMetadata?['full_name'] as String?)?.trim() ??
+                  'Customer';
+      } catch (_) {
+        customerName =
+            (user.userMetadata?['full_name'] as String?)?.trim() ?? 'Customer';
+      }
+
       final insertedOrder = await supabase
           .from('orders')
           .insert({
@@ -1109,13 +1125,7 @@ class _OrderScreenState extends State<OrderScreen> {
             'payment_status': 'Pending',
             'receipt_url': _paymentMethod == 'GCash' ? receiptUrl : null,
             'customer_id': user.id,
-            'customer_name':
-                (user.userMetadata?['full_name'] as String?)
-                        ?.trim()
-                        .isNotEmpty ==
-                    true
-                ? (user.userMetadata?['full_name'] as String).trim()
-                : 'Customer',
+            'customer_name': customerName,
             'address': _selectedAddress!.address,
             'address_id': _selectedAddress!.id,
             'delivery_instructions':

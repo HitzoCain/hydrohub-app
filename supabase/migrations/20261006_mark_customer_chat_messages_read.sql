@@ -24,7 +24,7 @@ BEGIN
   UPDATE public.messages AS message
   SET is_read = true
   WHERE message.conversation_id = p_conversation_id
-    AND lower(message.sender_type) IN ('driver', 'admin')
+    AND lower(coalesce(message.sender_type, '')) != 'customer'
     AND message.is_read = false;
 
   GET DIAGNOSTICS updated_count = ROW_COUNT;

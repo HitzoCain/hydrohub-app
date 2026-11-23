@@ -162,6 +162,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         throw Exception('Failed to update profile in database: $dbError');
       }
 
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(data: {'full_name': newName}),
+      );
+
+      await Supabase.instance.client
+          .from('orders')
+          .update({'customer_name': newName})
+          .eq('customer_id', user.id);
+
       // Update the local session
       await CustomerSession.save(
         customerId: user.id,
