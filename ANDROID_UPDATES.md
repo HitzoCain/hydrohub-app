@@ -17,6 +17,17 @@ Edit `android/key.properties` with the passwords you chose. It is ignored by Git
 
 ## Publishing an Update
 
+For repeated releases, use `tools/publish_android_release.ps1` after restoring the original signing key and `android/key.properties`:
+
+```powershell
+.\tools\publish_android_release.ps1 `
+  -VersionName "1.0.6" `
+  -VersionCode 7 `
+  -ReleaseNotes "Fixes and improvements."
+```
+
+The script updates `pubspec.yaml`, runs the updater test, builds the signed release APK, creates `update.json` with its SHA-256, and uploads both assets to a GitHub release. It requires the original JKS signing key; do not replace that key or existing installs may reject future updates.
+
 1. Increase the build number after `+` in `pubspec.yaml` for every release, for example `1.0.0+2`.
 2. Build the signed APK with `flutter build apk --release`.
 3. Calculate the APK checksum:
